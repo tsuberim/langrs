@@ -3,6 +3,7 @@ use std::{
     fmt::Display,
 };
 
+use anyhow::{anyhow, bail, Result, Context};
 use colored::Colorize;
 
 use crate::{
@@ -67,7 +68,7 @@ impl Type {
         }
     }
 
-    fn apply(&self, subst: &Subst) -> Result<Self, TypeError> {
+    fn apply(&self, subst: &Subst) -> Result<Self> {
         match self {
             var @ Type::Var(name) => match subst.get(name) {
                 Some(t) => Ok(t.clone()),
@@ -76,8 +77,7 @@ impl Type {
             con @ Type::Con(_) => Ok(con.clone()),
             Type::App(f, args) => {
                 let f = f.apply(subst)?;
-                let args: Result<Vec<Type>, TypeError> =
-                    args.iter().map(|t| t.apply(subst)).collect();
+                let args: Result<Vec<Type>> = args.iter().map(|t| t.apply(subst)).collect();
 
                 Ok(Type::App(Box::new(f), args?))
             }
@@ -87,7 +87,7 @@ impl Type {
                 union,
                 rest,
             } => {
-                let new_entries: Result<Subst, TypeError> = entries
+                let new_entries: Result<Subst> = entries
                     .iter()
                     .map(|(name, t)| Ok((name.clone(), t.apply(subst)?)))
                     .collect();
@@ -96,7 +96,7 @@ impl Type {
                 let rest_rec = subst.get(rest);
                 if let Some(rest_rec) = rest_rec {
                     if !open {
-                        return Err("Cannot substitute rest var for non-open record".into());
+                        bail!("Cannot substitute rest var for non-open record");
                     }
                     match rest_rec {
                         Type::Rec {
@@ -121,7 +121,9 @@ impl Type {
                             union: union.clone(),
                             entries: new_entries,
                         }),
-                        _ => Err("Cannot substitute a non-record for rest var of record".into()),
+                        _ => Err(anyhow!(
+                            "Cannot substitute a non-record for rest var of record"
+                        )),
                     }
                 } else {
                     Ok(Type::Rec {
@@ -185,7 +187,7 @@ impl Display for Type {
 }
 
 impl Scheme {
-    fn apply(&self, subst: &Subst) -> Result<Self, TypeError> {
+    fn apply(&self, subst: &Subst) -> Result<Self> {
         let Self(vars, t) = self;
         let mut new_subst = subst.clone();
         for name in vars.iter() {
@@ -246,14 +248,12 @@ pub fn generalize(t: &Type) -> Scheme {
     Scheme(free_vars.keys().cloned().collect(), t.clone())
 }
 
-type TypeError = String;
-
 pub fn occurs(var: &String, t: &Type) -> bool {
     let free_vars = t.free_vars();
     free_vars.get(var).is_some()
 }
 
-pub fn bind(var: &String, t: &Type) -> Result<Subst, TypeError> {
+pub fn bind(var: &String, t: &Type) -> Result<Subst> {
     if let Type::Var(v) = t {
         if v == var {
             return Ok(HashMap::new());
@@ -261,7 +261,7 @@ pub fn bind(var: &String, t: &Type) -> Result<Subst, TypeError> {
     }
 
     if occurs(var, t) {
-        return Err(format!("Var {} occurs in {}", var, t));
+        bail!("Var {} occurs in {}", var, t);
     }
 
     let mut map = HashMap::new();
@@ -269,8 +269,8 @@ pub fn bind(var: &String, t: &Type) -> Result<Subst, TypeError> {
     Ok(map)
 }
 
-pub fn compose(s1: &Subst, s2: Subst) -> Result<Subst, TypeError> {
-    let new_subst: Result<Subst, TypeError> = s1
+pub fn compose(s1: &Subst, s2: Subst) -> Result<Subst> {
+    let new_subst: Result<Subst> = s1
         .into_iter()
         .map(|(name, t)| Ok((name.clone(), t.apply(&s2)?)))
         .collect();
@@ -279,7 +279,7 @@ pub fn compose(s1: &Subst, s2: Subst) -> Result<Subst, TypeError> {
     Ok(new_subst)
 }
 
-pub fn apply_env(env: &TypeEnv, subst: &Subst) -> Result<TypeEnv, TypeError> {
+pub fn apply_env(env: &TypeEnv, subst: &Subst) -> Result<TypeEnv> {
     env.into_iter()
         .map(|(name, scheme)| Ok((name.clone(), scheme.apply(&subst)?)))
         .collect()
@@ -294,12 +294,12 @@ impl Infer {
         Infer { var_count: 0 }
     }
 
-    pub fn unify(&mut self, t1: &Type, t2: &Type) -> Result<Subst, TypeError> {
+    pub fn unify(&mut self, t1: &Type, t2: &Type) -> Result<Subst> {
         match (t1, t2) {
             (Type::App(f1, args1), Type::App(f2, args2)) => {
                 let mut subst = self.unify(f1, f2)?;
                 if args1.len() != args2.len() {
-                    return Err("Different lengths".into());
+                    bail!("Arguments have different lengths");
                 }
                 for (arg1, arg2) in args1.iter().zip(args2.iter()) {
                     let arg1 = &arg1.apply(&subst)?;
@@ -327,7 +327,7 @@ impl Infer {
                 let mut subst: Subst = HashMap::new();
 
                 if union1 != union2 {
-                    return Err("Cannot unify record with union".into());
+                    bail!("Cannot unify record with union");
                 }
                 let union = *union1;
 
@@ -366,10 +366,11 @@ impl Infer {
                         );
                     }
                 } else {
-                    return Err(format!(
-                        "Rec {} is not open and does not contain all the keys from {}",
-                        rec1, rec2
-                    ));
+                    bail!(
+                        "Record {} is not open and does not contain keys: [{}]",
+                        rec1,
+                        rec2_minus_rec1.keys().cloned().collect::<Vec<String>>().join(", ").bright_black()
+                    );
                 }
                 if !(rec1_minus_rec2.len() > 0) || *open2 {
                     if rec1_minus_rec2.len() > 0 {
@@ -384,17 +385,18 @@ impl Infer {
                         );
                     }
                 } else {
-                    return Err(format!(
-                        "Rec {} is not open and does not contain all the keys from {}",
-                        rec2, rec1
-                    ));
+                    bail!(
+                        "Record {} is not open and does not contain keys: [{}]",
+                        rec2,
+                        rec1_minus_rec2.keys().cloned().collect::<Vec<String>>().join(", ").bright_black()
+                    );
                 }
 
                 Ok(subst)
             }
             (Type::Var(v), t) => bind(v, t),
             (t, Type::Var(v)) => bind(v, t),
-            (_, _) => Err(format!("Could not unify types {}, {}", t1, t2)),
+            (_, _) => Err(anyhow!("Could not unify types {}, {}", t1, t2)),
         }
     }
 
@@ -406,7 +408,7 @@ impl Infer {
         format!("T{}", self.var_count)
     }
 
-    pub fn instantiate(&mut self, scheme: &Scheme) -> Result<Type, TypeError> {
+    pub fn instantiate(&mut self, scheme: &Scheme) -> Result<Type> {
         let Scheme(vars, t) = scheme;
         let subst: Subst = vars
             .into_iter()
@@ -415,17 +417,17 @@ impl Infer {
         t.apply(&subst)
     }
 
-    pub fn infer(&mut self, term: &Term, env: &TypeEnv) -> Result<(Subst, Type), TypeError> {
+    pub fn infer(&mut self, term: &Term, env: &TypeEnv) -> Result<(Subst, Type)> {
         match term {
             Term::Lit(val) => match val {
                 Value::Str(_) => Ok((HashMap::new(), Type::Con("Str".into()))),
                 Value::Num(_) => Ok((HashMap::new(), Type::Con("Num".into()))),
-                _ => Err("Cannot infer type for non-literal value".into()),
+                _ => Err(anyhow!("Cannot infer type for non-literal value")),
             },
             Term::Var(id) => {
                 let scheme = env
                     .get(id)
-                    .ok_or(format!("Unresolved type for variable {}", id))?;
+                    .ok_or(anyhow!("Unresolved type for variable {}", id))?;
                 Ok((HashMap::new(), self.instantiate(scheme)?))
             }
             Term::App(f, args) => {

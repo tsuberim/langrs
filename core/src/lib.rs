@@ -6,7 +6,8 @@ use std::{
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 use types::{Scheme, Type};
-use value::{Closure, Value, ValueError};
+use value::{Closure, Value};
+use anyhow::{Result, anyhow, bail, Context};
 
 use crate::{
     term::parse,
@@ -21,10 +22,10 @@ mod value;
 fn repl(
     lines: &mut Lines<StdinLock>,
     env: &mut HashMap<String, (Value, Scheme)>,
-) -> Result<String, String> {
+) -> Result<String> {
     print!("fun> ");
-    std::io::stdout().flush().map_err(|e| e.to_string())?;
-    let line = lines.next().unwrap().map_err(|e| e.to_string())?;
+    std::io::stdout().flush()?;
+    let line = lines.next().unwrap()?;
     if line.is_empty() {
         return Ok("".into());
     }
@@ -36,31 +37,29 @@ fn repl(
         .iter()
         .map(|(k, (_, t))| (k.clone(), t.clone()))
         .collect();
-    let (_, t) = Infer::new()
-        .infer(&term, &type_env)
-        .map_err(|e| format!("TypeError: {}", e))?;
+    let (_, t) = Infer::new().infer(&term, &type_env).context("Type error")?;
     let scheme = generalize(&t);
 
     let value_env = env
         .iter()
         .map(|(k, (v, _))| (k.clone(), v.clone()))
         .collect();
-    let value = evaluate(&term, &value_env).map_err(|e| format!("RuntimeError: {}", e))?;
+    let value = evaluate(&term, &value_env)?;
 
     Ok(format!("{} : {}", value, scheme))
 }
 
-fn add(args: Vec<Value>, _env: HashMap<String, Value>) -> Result<Value, ValueError> {
-    let lhs = args.get(0).ok_or("Expected lhs")?;
-    let rhs = args.get(1).ok_or("Expected rhs")?;
+fn add(args: Vec<Value>, _env: HashMap<String, Value>) -> Result<Value> {
+    let lhs = args.get(0).context("Expected lhs")?;
+    let rhs = args.get(1).context("Expected rhs")?;
 
     if args.len() > 2 {
-        return Err("More than 2 args".into());
+        bail!("More than 2 args");
     }
 
     match (lhs, rhs) {
         (Value::Num(x), Value::Num(y)) => Ok(Value::Num(x + y)),
-        _ => Err("Type mismatch".into()),
+        _ => Err(anyhow!("Type mismatch")),
     }
 }
 
@@ -95,7 +94,7 @@ pub fn main() {
     loop {
         match repl(&mut lines, &mut env) {
             Ok(result) => println!("{}", result),
-            Err(err) => println!("{}", err),
+            Err(err) => println!("{:#?}", err),
         }
     }
 }

@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use colored::Colorize;
 use tree_sitter::{Node, Parser};
 use tree_sitter_fun::{language, Expr, ExprVisitor, IntoExpr};
+use anyhow::{Result, anyhow, bail};
 
 use crate::value::Value;
 
@@ -213,19 +214,17 @@ impl ExprVisitor<Node<'_>, Term> for MakeTerm<'_> {
     }
 }
 
-pub type ParseError = String;
-
-pub fn parse(src: &str) -> Result<Term, ParseError> {
+pub fn parse(src: &str) -> Result<Term> {
     let mut parser = Parser::new();
     parser
         .set_language(language())
         .expect("Must be able to set parser");
 
-    let tree = parser.parse(src, None).ok_or("Could not parse line")?;
+    let tree = parser.parse(src, None).ok_or(anyhow!("Cannot parse line"))?;
     let root = tree.root_node();
 
     let root = root
         .named_child(0)
-        .ok_or("Expected one expr child of source_file")?;
+        .ok_or(anyhow!("Expected first child"))?;
     Ok(MakeTerm { src }.visit(root))
 }

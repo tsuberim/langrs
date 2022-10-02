@@ -2,6 +2,7 @@ use colored::Colorize;
 
 use crate::term::{Term, Pattern};
 use std::{collections::HashMap, fmt::Display};
+use anyhow::{Result, anyhow, bail};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -14,7 +15,7 @@ pub enum Value {
 
 #[derive(Debug, Clone)]
 pub enum ClosureImpl {
-    Builtin(fn(Vec<Value>, HashMap<String, Value>) -> Result<Value, ValueError>),
+    Builtin(fn(Vec<Value>, HashMap<String, Value>) -> Result<Value>),
     Body(Box<Term>),
 }
 
@@ -43,15 +44,14 @@ impl Display for Value {
 }
 
 pub type ValueEnv = HashMap<String, Value>;
-pub type ValueError = String;
 
-pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value, ValueError> {
+pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value> {
     match term {
         Term::Lit(v) => Ok(v.clone()),
         Term::Var(name) => env
             .get(name)
             .map(|x| x.clone())
-            .ok_or(format!("Unbound variable {}", name)),
+            .ok_or(anyhow!("Unbound variable {}", name)),
         Term::App(func, args) => {
             let f = evaluate(func, env)?;
             let mut vals = Vec::new();
@@ -76,13 +76,13 @@ pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value, ValueError> {
                     }
                 }
             } else {
-                Err(format!("{} is not a function", func))
+                Err(anyhow!("{} is not a function", func))
             }
         }
         expr @ Term::Abs(args, body) => {
             let mut captures = HashMap::new();
             for name in expr.free_vars().keys().cloned() {
-                let val = env.get(&name).ok_or(format!("Unbound variable {}", name))?;
+                let val = env.get(&name).ok_or(anyhow!("Unbound variable {}", name))?;
                 captures.insert(name, val.clone());
             }
 
@@ -103,9 +103,9 @@ pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value, ValueError> {
         Term::Acc(term, prop) => {
             let val = evaluate(term, env)?;
             if let Value::Rec(entries) = val {
-                entries.get(prop).map(|x| x.clone()).ok_or(format!("Key {} not found", prop))
+                entries.get(prop).map(|x| x.clone()).ok_or(anyhow!("Key {} not found", prop))
             } else {
-                Err("Value is not a record".into())
+                Err(anyhow!("Value is not a record"))
             }
         },
         Term::Cons(name, content) => {
@@ -127,9 +127,9 @@ pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value, ValueError> {
                     return evaluate(&otherwise, env);
                 }
 
-                Err("No case matced".into())
+                Err(anyhow!("No case matced"))
             } else {
-                Err("Not a cons".into())
+                Err(anyhow!("Not a cons"))
             }
         },
     }
