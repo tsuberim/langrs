@@ -1,0 +1,17 @@
+[package]
+name = "tree_sitter_node_types"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+convert_case = "0.6.0"
+indexmap = { version = "1.9.1", features = ["serde", "serde-1"] }
+quote = "1.0.21"
+serde = { version = "1.0.144", features = ["derive"] }
+serde_json = "1.0.85"
+syn = "1.0.100"
+tree-sitter = "0.20.9"
