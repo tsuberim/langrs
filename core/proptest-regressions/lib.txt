@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc da6c1c2e7317ec402e2a876c361f457875487bfc1266154ce51e8ba691cc8eb6 # shrinks to term = Var("aA")
+cc 573b005828f348646b1b5a09e3170e81b5e498403fdf4f1d1a85f312ed5b6673 # shrinks to term = Abs([], Var("a_"))
+cc d0cfec7a1451fdf32dfc94f35b5a6d7d5d08a5f6e1bac92d57f15ee4dc84c400 # shrinks to term = App(Var("a0"), [Var("aa")])
+cc 44ae015f25c422bdee1ef6837eedf63eadadbc99015e42052cd650021558b14f # shrinks to term = Acc(Cons("Aa", Var("aa")), "a0")
+cc c3439f0f73dec9552db0f159e6f8219c2eac2d15c0d63d833a570f2be4ae4d7a # shrinks to term = Rec({})
+cc c3ea40b9ca2d81d98b2334ee3ae1fd1412021ac5b925f42f2377f5f20279167d # shrinks to term = Acc(Cons("Aa", Rec({})), "aA")
+cc b97149204fb2adccc841218d45c6bf3e7e82c2b68f9ade384578bc0aace855f9 # shrinks to term = Acc(Abs(["aA"], Var("aA")), "aa")

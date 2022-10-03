@@ -1,8 +1,10 @@
 use colored::Colorize;
+use quickcheck::Arbitrary;
 
 use crate::term::{Term, Pattern};
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
 use anyhow::{Result, anyhow, bail};
+use proptest_derive::{Arbitrary};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -16,7 +18,7 @@ pub enum Value {
 #[derive(Debug, Clone)]
 pub enum ClosureImpl {
     Builtin(fn(Vec<Value>, HashMap<String, Value>) -> Result<Value>),
-    Body(Box<Term>),
+    Body(Rc<Term>),
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +49,8 @@ pub type ValueEnv = HashMap<String, Value>;
 
 pub fn evaluate(term: &Term, env: &ValueEnv) -> Result<Value> {
     match term {
-        Term::Lit(v) => Ok(v.clone()),
+        Term::Num(v) => Ok(Value::Num(*v)),
+        Term::Str(v) => Ok(Value::Str(v.clone())),
         Term::Var(name) => env
             .get(name)
             .map(|x| x.clone())

@@ -3,8 +3,13 @@ use std::{
     fmt::Display,
 };
 
-use anyhow::{anyhow, bail, Result, Context};
+use anyhow::{anyhow, bail, Context, Result};
 use colored::Colorize;
+use proptest::{
+    prelude::{any, prop},
+    prop_oneof,
+    strategy::{Strategy, Just},
+};
 
 use crate::{
     term::{Pattern, Term},
@@ -24,8 +29,40 @@ pub enum Type {
     App(Box<Type>, Vec<Type>),
 }
 
+pub fn arb_type() -> impl Strategy<Value = Type> {
+    let leaf = prop_oneof![
+        "[a-z][a-zA-Z0-9_]{1}".prop_map(Type::Var),
+        Just(Type::Con("Fun".into())),
+        Just(Type::Con("Num".into())),
+        Just(Type::Con("Str".into())),
+    ];
+    leaf.prop_recursive(
+        8,   // 8 levels deep
+        256, // Shoot for maximum size of 256 nodes
+        10,  // We put up to 10 items per collection
+        |inner| {
+            prop_oneof![
+                (inner.clone(), prop::collection::vec(inner.clone(), 1..4))
+                    .prop_map(|(f, args)| Type::App(Box::new(f), args)),
+                (
+                    prop::collection::hash_map("[a-z][a-zA-Z0-9_]{1}", inner.clone(), 0..4),
+                    any::<bool>(),
+                    any::<bool>(),
+                    "[a-z][a-zA-Z0-9_]{1}"
+                )
+                    .prop_map(|(entries, open, union, rest)| Type::Rec {
+                        entries,
+                        open,
+                        union,
+                        rest
+                    })
+            ]
+        },
+    )
+}
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct Scheme(HashSet<String>, Type);
+pub struct Scheme(pub HashSet<String>, pub Type);
 
 pub type TypeEnv = HashMap<String, Scheme>;
 pub type Subst = HashMap<String, Type>;
@@ -369,7 +406,12 @@ impl Infer {
                     bail!(
                         "Record {} is not open and does not contain keys: [{}]",
                         rec1,
-                        rec2_minus_rec1.keys().cloned().collect::<Vec<String>>().join(", ").bright_black()
+                        rec2_minus_rec1
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                            .bright_black()
                     );
                 }
                 if !(rec1_minus_rec2.len() > 0) || *open2 {
@@ -388,7 +430,12 @@ impl Infer {
                     bail!(
                         "Record {} is not open and does not contain keys: [{}]",
                         rec2,
-                        rec1_minus_rec2.keys().cloned().collect::<Vec<String>>().join(", ").bright_black()
+                        rec1_minus_rec2
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                            .bright_black()
                     );
                 }
 
@@ -419,11 +466,8 @@ impl Infer {
 
     pub fn infer(&mut self, term: &Term, env: &TypeEnv) -> Result<(Subst, Type)> {
         match term {
-            Term::Lit(val) => match val {
-                Value::Str(_) => Ok((HashMap::new(), Type::Con("Str".into()))),
-                Value::Num(_) => Ok((HashMap::new(), Type::Con("Num".into()))),
-                _ => Err(anyhow!("Cannot infer type for non-literal value")),
-            },
+            Term::Num(_) => Ok((HashMap::new(), Type::Con("Num".into()))),
+            Term::Str(_) => Ok((HashMap::new(), Type::Con("Str".into()))),
             Term::Var(id) => {
                 let scheme = env
                     .get(id)

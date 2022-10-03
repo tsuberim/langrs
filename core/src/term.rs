@@ -1,25 +1,54 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, rc::Rc};
 
+use anyhow::{anyhow, bail, Result};
 use colored::Colorize;
+use proptest::{prelude::{any, prop}, prop_oneof, strategy::Strategy};
+use proptest_derive::Arbitrary;
 use tree_sitter::{Node, Parser};
 use tree_sitter_fun::{language, Expr, ExprVisitor, IntoExpr};
-use anyhow::{Result, anyhow, bail};
 
-use crate::value::Value;
+use crate::{value::Value, types::{Type, Scheme, Subst}};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {
-    Lit(Value),
+    Num(u64),
+    Str(String),
     Var(String),
-    Cons(String, Box<Term>),
-    Case(Box<Term>, Vec<(Pattern, Term)>, Option<Box<Term>>),
-    App(Box<Term>, Vec<Term>),
-    Abs(Vec<String>, Box<Term>),
-    Rec(HashMap<String, Term>),
-    Acc(Box<Term>, String),
+    Cons(String, Rc<Term>),
+    Case(Rc<Term>, Vec<(Pattern, Rc<Term>)>, Option<Rc<Term>>),
+    App(Rc<Term>, Vec<Rc<Term>>),
+    Abs(Vec<String>, Rc<Term>),
+    Rec(HashMap<String, Rc<Term>>),
+    Acc(Rc<Term>, String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+pub fn arb_term() -> impl Strategy<Value = Term> {
+    let leaf = prop_oneof!["[a-z][a-zA-Z0-9_]".prop_map(Term::Var),];
+
+    leaf.prop_recursive(
+        8,   // 8 levels deep
+        256, // Shoot for maximum size of 256 nodes
+        10,  // We put up to 10 items per collection
+        |inner| {
+            prop_oneof![
+                ("[A-Z][a-zA-Z0-9_]{1}", inner.clone())
+                    .prop_map(|(name, inner)| Term::Cons(name, Rc::new(inner))),
+                (inner.clone(), "[a-z][a-zA-Z0-9_]{1}", )
+                    .prop_map(|(inner, name)| Term::Acc(Rc::new(inner), name)),
+                (inner.clone(), prop::collection::vec(inner.clone(), 1..4))
+                    .prop_map(|(f, args)| Term::App(Rc::new(f), args.into_iter().map(Rc::new).collect())),
+                // (inner.clone(), prop::collection::vec(inner.clone(), 0..10), inner.clone())
+                //     .prop_map(|(e, args, otherwise)| Term::Case(Box::new(e), cases, otherwise)),
+                (prop::collection::vec("[a-z][a-zA-Z0-9_]{1}", 1..4), inner.clone())
+                    .prop_map(|(names, inner)| Term::Abs(names, Rc::new(inner))),
+                prop::collection::hash_map("[a-z][a-zA-Z0-9_]{1}", inner.clone(), 0..4)
+                    .prop_map(|entries| Term::Rec(entries.into_iter().map(|(k, v)| (k, Rc::new(v))).collect()))
+            ]
+        },
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Arbitrary)]
 pub enum Pattern {
     Cons(String, String),
 }
@@ -34,7 +63,7 @@ impl Display for Pattern {
 impl Term {
     pub fn free_vars(&self) -> HashMap<String, u64> {
         match self {
-            Term::Lit(_) => HashMap::new(),
+            Term::Num(_) | Term::Str(_) => HashMap::new(),
             Term::Var(name) => {
                 let mut map = HashMap::new();
                 map.insert(name.clone(), 1);
@@ -93,7 +122,8 @@ impl Term {
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Term::Lit(val) => write!(f, "{}", val),
+            Term::Num(val) => write!(f, "{}", val),
+            Term::Str(val) => write!(f, "'{}'", val),
             Term::Var(name) => write!(f, "{}", name.green()),
             Term::App(func, args) => write!(
                 f,
@@ -114,7 +144,7 @@ impl Display for Term {
                     .collect::<Vec<String>>()
                     .join(", ")
             ),
-            Term::Acc(term, prop) => write!(f, "{}.{}", term, prop),
+            Term::Acc(term, prop) => write!(f, "({}).{}", term, prop),
             Term::Cons(name, content) => write!(f, "{}({})", name.bright_black(), content),
             Term::Case(expr, cases, otherwise) => {
                 write!(f, "when {} is ", expr)?;
@@ -151,12 +181,12 @@ impl ExprVisitor<Node<'_>, Term> for MakeTerm<'_> {
     fn visit_lambda(&mut self, _node: Node, arguments: Vec<Node>, body: Term) -> Term {
         Term::Abs(
             arguments.iter().map(|node| self.text(node)).collect(),
-            Box::new(body),
+            Rc::new(body),
         )
     }
 
     fn visit_application(&mut self, _node: Node, arguments: Vec<Term>, function: Term) -> Term {
-        Term::App(Box::new(function), arguments)
+        Term::App(Rc::new(function), arguments.into_iter().map(Rc::new).collect())
     }
 
     fn visit_match(
@@ -181,36 +211,36 @@ impl ExprVisitor<Node<'_>, Term> for MakeTerm<'_> {
                     _ => unimplemented!(),
                 }
             })
-            .zip(consequences.into_iter())
+            .zip(consequences.into_iter().map(Rc::new))
             .collect();
-        Term::Case(Box::new(expression), cases, otherwise.map(Box::new))
+        Term::Case(Rc::new(expression), cases, otherwise.map(Rc::new))
     }
 
     fn visit_record(&mut self, _node: Node, keys: Vec<Node>, values: Vec<Term>) -> Term {
         Term::Rec(
             keys.iter()
                 .map(|node| self.text(&node))
-                .zip(values.iter().map(|term| term.clone()))
+                .zip(values.into_iter().map(Rc::new))
                 .collect(),
         )
     }
 
     fn visit_string(&mut self, node: Node) -> Term {
         let text = self.text(&node);
-        Term::Lit(Value::Str(text[1..text.len() - 1].into()))
+        Term::Str(text[1..text.len() - 1].into())
     }
 
     fn visit_access(&mut self, _node: Node, expression: Term, property: Node) -> Term {
-        Term::Acc(Box::new(expression), self.text(&property))
+        Term::Acc(Rc::new(expression), self.text(&property))
     }
 
     fn visit_number(&mut self, node: Node) -> Term {
         let text = self.text(&node);
-        Term::Lit(Value::Num(text.parse().unwrap()))
+        Term::Num(text.parse().unwrap())
     }
 
     fn visit_constructor(&mut self, _node: Node, content: Term, name: Node) -> Term {
-        Term::Cons(self.text(&name), Box::new(content))
+        Term::Cons(self.text(&name), Rc::new(content))
     }
 }
 
@@ -220,11 +250,11 @@ pub fn parse(src: &str) -> Result<Term> {
         .set_language(language())
         .expect("Must be able to set parser");
 
-    let tree = parser.parse(src, None).ok_or(anyhow!("Cannot parse line"))?;
+    let tree = parser
+        .parse(src, None)
+        .ok_or(anyhow!("Cannot parse line"))?;
     let root = tree.root_node();
 
-    let root = root
-        .named_child(0)
-        .ok_or(anyhow!("Expected first child"))?;
+    let root = root.named_child(0).ok_or(anyhow!("Expected first child"))?;
     Ok(MakeTerm { src }.visit(root))
 }
