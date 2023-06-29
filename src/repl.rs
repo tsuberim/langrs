@@ -1,7 +1,7 @@
 use std::{io::{self, Write}, process};
 use im::HashMap;
 use anyhow::{Result, Ok};
-use rustyline::{DefaultEditor};
+use rustyline::DefaultEditor;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 
@@ -14,7 +14,7 @@ pub fn repl() -> Result<()> {
 
     let mut step = || -> Result<()> {
         let src = rl.readline("fun> ")?;
-    
+
         let ast = parser.parse(&src, Option::None).ok_or(anyhow::format_err!("could not parse"))?;
 
         let term = to_ast(ast.root_node(), src.as_str())?;
