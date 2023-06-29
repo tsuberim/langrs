@@ -94,6 +94,18 @@ pub fn eval(term: &Term, env: &Env) -> Result<Rc<Value>> {
                 bail!("matching on non tag value {}", val)
             }
         },
+        Term::Access(term, property) => {
+            let val = eval(term, env)?;
+            if let Value::Record(items) = val.as_ref() {
+                if let Some(out) = items.get(property) {
+                    Ok(Rc::clone(out))
+                } else {
+                    bail!("record {} does not have property {}", val, property)
+                }
+            } else {
+                bail!("cannot access property {} of a non-record {}", property, val)
+            }
+        },
     }
 }
 

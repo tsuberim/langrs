@@ -27,6 +27,7 @@ module.exports = grammar({
       list: $ => seq('[', sep(field('items', $._term), ','), ']'),
       app: $ => seq('@', field('f', $._term), '(', field('arg', $._term), ')'),
       lam: $ => seq('\\', field('arg', $.id), '->', field('body', $._term)),
+      access: $ => prec.left(1,seq(field('term', $._term), '.', field('property', $.id))),
       match: $ => prec.right(
         seq(
           'when', 
@@ -38,6 +39,6 @@ module.exports = grammar({
       ),
 
       parens: $ => seq('(', field('term', $._term), ')'),
-      _term: $ => choice($._lit, $.id, $.tag, $.record, $.list, $.match, $.app, $.lam, $.parens),
+      _term: $ => choice($._lit, $.id, $.tag, $.record, $.list, $.match, $.app, $.access, $.lam, $.parens),
     }
   });

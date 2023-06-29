@@ -26,7 +26,7 @@ x
 )
 
 ==================
-tagtructor
+Tag
 ==================
 X
 ---
@@ -35,7 +35,7 @@ X
 )
 
 ==================
-tagtructor with payload
+Tag with payload
 ==================
 X 2
 ---
@@ -44,7 +44,7 @@ X 2
 )
 
 ==================
-tagtructor with record payload
+Tag with record payload
 ==================
 X{foo: 2}
 ---
@@ -149,6 +149,18 @@ when y is Bar x -> when x is Foo z -> 2
       (id)
       (num)
     )
+  )
+)
+
+==================
+Access
+==================
+x.name
+---
+(source_file
+  (access 
+    (id)
+    (id)
   )
 )
 

@@ -32,6 +32,7 @@ pub enum Term {
     Record(HashMap<Id, Term>),
     Match(Rc<Term>, HashMap<Id, (Id, Term)>, Option<Rc<Term>>),
     List(Vec<Term>),
+    Access(Rc<Term>, Id),
     App(Rc<Term>, Rc<Term>),
     Lam(Id, Rc<Term>)
 }
@@ -64,6 +65,7 @@ impl Display for Term {
             },
             Term::App(function, arg) => write!(f, "({})({})", function, arg),
             Term::Lam(arg, body) => write!(f, "\\{} -> {}", arg.green(), body),
+            Term::Access(term, property) => write!(f, "{}.{}", term, property),
         }
     }
 }
@@ -199,10 +201,20 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             let id = node.child_by_field_name("arg").ok_or(anyhow::format_err!("could not find field 'arg' in lambda node"))?;
             let id = node_text(&id, src)?;
 
-            let body = node.child_by_field_name("body").ok_or(anyhow::format_err!("could not find field 'body' in application node"))?;
+            let body = node.child_by_field_name("body").ok_or(anyhow::format_err!("could not find field 'body' in lambda node"))?;
             let body = to_ast(body, src)?;
 
             let term = Term::Lam(id, Rc::new(body));
+            Ok(term)
+        },
+        "access" => {
+            let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
+            let term = to_ast(term, src)?;
+
+            let property = node.child_by_field_name("property").ok_or(anyhow::format_err!("could not find field 'property' in access node"))?;
+            let property = node_text(&property, src)?;
+
+            let term = Term::Access(Rc::new(term), property);
             Ok(term)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))

@@ -1,6 +1,6 @@
 use std::{fmt::Display};
 use colored::Colorize;
-use im::{HashMap, HashSet};
+use im::{HashMap, HashSet, hashmap};
 use anyhow::{Result, Ok, bail};
 
 use crate::term::{Term, Lit};
@@ -370,6 +370,14 @@ impl Infer {
                 let t = self.infer(term, env)?;
                 let in_t = Type::Record { items, union: true, rest: if let Some(_) = default { Some(self.fresh()) } else { None } };
                 self.emit(t, in_t)?;
+
+                Ok(out)
+            },
+            Term::Access(term, property) => {
+                let out = Type::Var(self.fresh());
+                let t = self.infer(term, env)?;
+                let rest = self.fresh();
+                self.emit(t, Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
 
                 Ok(out)
             },
