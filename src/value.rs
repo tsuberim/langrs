@@ -1,4 +1,5 @@
 use std::{rc::Rc, fmt::Display};
+use colored::Colorize;
 use im::{HashMap};
 use anyhow::{Result, Ok, bail};
 
@@ -22,10 +23,10 @@ impl Display for Value {
             Value::Tag(name, payload) => {
                 if let Value::Record(data) = payload.as_ref() {
                     if data.len() == 0 {
-                        return write!(f, "{}", name)
+                        return write!(f, "{}", name.blue())
                     }
                 }
-                write!(f, "{} {}", name, payload)
+                write!(f, "{} {}", name.blue(), payload)
             }
             Value::Record(data) => {
                 let pairs: Vec<String> = data.iter().map(|(k ,v)| format!("{}: {}", k, v)).collect();
@@ -35,7 +36,7 @@ impl Display for Value {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Value::Closure(_, arg, body) => write!(f, "<closure {} -> {}>", arg, body)
+            Value::Closure(_, arg, body) => write!(f, "<closure {} -> {}>", arg.green(), body)
         }
     }
 }

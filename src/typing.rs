@@ -1,4 +1,5 @@
 use std::{fmt::Display};
+use colored::Colorize;
 use im::{HashMap, HashSet};
 use anyhow::{Result, Ok, bail};
 
@@ -42,7 +43,7 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Var(id) => id.fmt(f),
+            Type::Var(id) => id.green().fmt(f),
             Type::Record { items, union, rest } => {
                 fn is_empty_record(t: &Type) -> bool {
                     match t {
@@ -53,14 +54,14 @@ impl Display for Type {
 
                 let items: Vec<String> = items.into_iter().map(|(k, t)| {
                     if *union && is_empty_record(t) {
-                        format!("{}", k)
+                        format!("{}", k.blue())
                     } else if *union {
-                        format!("{} {}", k, t)
+                        format!("{} {}", k.blue(), t)
                     } else {
                         format!("{}: {}", k, t)
                     }
                 }).collect();
-                let rest = if let Some(id) = rest { format!(" | {}",id) } else { "".to_string() };
+                let rest = if let Some(id) = rest { format!(" | {}",id.green()) } else { "".to_string() };
                 let inner = format!("{}{}",items.join(", "), rest);
                 if *union && items.len() == 1 && rest == ""{
                     write!(f, "{}", inner) 
@@ -73,9 +74,9 @@ impl Display for Type {
             Type::Cons(name, args) => {
                 let args: Vec<String> = args.iter().map(|x| format!("{}", x)).collect();
                 if args.len() == 0 { 
-                    write!(f, "{}", name) 
+                    write!(f, "{}", name.blue()) 
                 } else {
-                    write!(f, "{}<{}>", name, args.join(", "))
+                    write!(f, "{}<{}>", name.blue(), args.join(", "))
                 }
             },
         }
@@ -89,7 +90,7 @@ impl Display for ForAll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let ForAll(ids, t) = self;
         if ids.len() > 1 {
-            write!(f, "∀{}. {}", ids.join(" "), t)
+            write!(f, "∀{}. {}", ids.join(" ").green(), t)
         } else {
             write!(f, "{}", t)
         }

@@ -1,4 +1,5 @@
 use std::{rc::Rc, fmt::Display};
+use colored::Colorize;
 use im::{HashMap};
 use anyhow::{Result, Ok, bail};
 use tree_sitter::Node;
@@ -14,8 +15,8 @@ pub enum Lit {
 impl Display for Lit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Lit::Str(str) => str.fmt(f),
-            Lit::Num(n) => n.fmt(f),
+            Lit::Str(str) => str.blue().fmt(f),
+            Lit::Num(n) => n.to_string().blue().fmt(f),
         }
     }
 }
@@ -39,14 +40,14 @@ impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Term::Lit(lit) => lit.fmt(f),
-            Term::Var(name) => write!(f, "{}", name),
+            Term::Var(name) => write!(f, "{}", name.green()),
             Term::Tag(name, payload) => {
                 if let Term::Record(data) = payload.as_ref() {
                     if data.len() == 0 {
-                        return write!(f, "{}", name)
+                        return write!(f, "{}", name.blue())
                     }
                 }
-                write!(f, "{}({})", name, payload)
+                write!(f, "{}({})", name.blue(), payload)
             },
             Term::Record(data) => {
                 let pairs: Vec<String> = data.iter().map(|(k ,v)| format!("{}: {}", k, v)).collect();
@@ -62,7 +63,7 @@ impl Display for Term {
                 write!(f, "when {} is {}{}", term, cases.join("; "), default)
             },
             Term::App(function, arg) => write!(f, "({})({})", function, arg),
-            Term::Lam(arg, body) => write!(f, "\\{} -> {}", arg, body),
+            Term::Lam(arg, body) => write!(f, "\\{} -> {}", arg.green(), body),
         }
     }
 }
