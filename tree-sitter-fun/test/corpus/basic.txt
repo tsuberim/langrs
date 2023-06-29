@@ -62,12 +62,31 @@ Lambda
 )
 
 ==================
-Application
+Block
 ==================
-@(\x -> x)(32)
+(
+  x = 2
+  y = 4
+  y
+)
 ---
 (source_file
-  (app (parens (lam (id) (id))) (num))
+  (block
+    (id)
+    (num)
+    (id)
+    (num)
+    (id)
+  )
+)
+
+==================
+Application
+==================
+(\x -> x)(32)
+---
+(source_file
+  (app (block (lam (id) (id))) (num))
 )
 
 ==================

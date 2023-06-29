@@ -1,1 +1,1 @@
-{name: `Matan`}.name
+add(1,2)

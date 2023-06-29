@@ -229,6 +229,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fun"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "im",
+ "rustyline",
+ "text_io",
+ "tree-sitter",
+ "tree-sitter-fun",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,20 +307,6 @@ dependencies = [
  "io-lifetimes",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "langrs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "colored",
- "im",
- "rustyline",
- "text_io",
- "tree-sitter",
- "tree-sitter-fun",
 ]
 
 [[package]]

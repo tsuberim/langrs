@@ -1,6 +1,6 @@
-use std::{rc::Rc, fmt::Display};
+use std::{rc::Rc, fmt::{Display, write}, hash::Hash};
 use colored::Colorize;
-use im::{HashMap};
+use im::{HashMap, HashSet, hashset};
 use anyhow::{Result, Ok, bail};
 use tree_sitter::Node;
 
@@ -33,8 +33,41 @@ pub enum Term {
     Match(Rc<Term>, HashMap<Id, (Id, Term)>, Option<Rc<Term>>),
     List(Vec<Term>),
     Access(Rc<Term>, Id),
-    App(Rc<Term>, Rc<Term>),
-    Lam(Id, Rc<Term>)
+    App(Rc<Term>, Vec<Term>),
+    Block(HashMap<Id, Term>, Rc<Term>), // like a let
+    Lam(Vec<Id>, Rc<Term>)
+}
+
+impl Term {
+    pub fn free_vars(&self) -> HashSet<Id> {
+        match self {
+            Term::Lit(_) => hashset![],
+            Term::Var(v) => hashset![v.clone()],
+            Term::Tag(_, payload) => payload.free_vars(),
+            Term::Record(items) => items.into_iter().map(|(k, v)| v.free_vars()).fold(hashset![], HashSet::union),
+            Term::Match(term, cases, default) => {
+                let mut fv: HashSet<String> = term.free_vars();
+                for (_, (id, result)) in cases {
+                    fv = fv.union(result.free_vars().without(id))
+                }
+                if let Some(default) = default {
+                    fv = fv.union(default.free_vars());
+                }
+                fv
+            },
+            Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
+            Term::Access(x, prop) => x.free_vars(),
+            Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
+            Term::Block(defs, term) => todo!(),
+            Term::Lam(params, body) => {
+                let mut fv = body.free_vars();
+                for param in params {
+                    fv = fv.without(param)
+                }
+                fv
+            },
+        }
+    }
 }
 
 impl Display for Term {
@@ -63,9 +96,16 @@ impl Display for Term {
                 let default = if let Some(term) = default { format!(" else {}", term) } else { "".to_string() };
                 write!(f, "when {} is {}{}", term, cases.join("; "), default)
             },
-            Term::App(function, arg) => write!(f, "({})({})", function, arg),
-            Term::Lam(arg, body) => write!(f, "\\{} -> {}", arg.green(), body),
+            Term::App(function, args) => {
+                let args: Vec<String> = args.iter().map(|arg| format!("{}", arg)).collect();
+                write!(f, "({})({})", function, args.join(", "))
+            },
+            Term::Lam(params, body) => write!(f, "\\{} -> {}", params.join(", "), body),
             Term::Access(term, property) => write!(f, "{}.{}", term, property),
+            Term::Block(defs, term) => {
+                let defs: Vec<String> = defs.iter().map(|(k, v)| format!("{} = {}", k, v)).collect();
+                write!(f, "({}\n{})", defs.join("\n"), term)
+            },
         }
     }
 }
@@ -191,20 +231,24 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in application node"))?;
             let f = to_ast(f, src)?;
 
-            let arg = node.child_by_field_name("arg").ok_or(anyhow::format_err!("could not find field 'arg' in application node"))?;
-            let arg = to_ast(arg, src)?;
+            let args: Vec<Term> = node
+                .children_by_field_name("args", &mut  cursor)
+                .map(|x| to_ast(x, src))
+                .collect::<Result<Vec<Term>>>()?;
 
-            let term = Term::App(Rc::new(f), Rc::new(arg));
+            let term = Term::App(Rc::new(f), args);
             Ok(term)
         },
         "lam" => {
-            let id = node.child_by_field_name("arg").ok_or(anyhow::format_err!("could not find field 'arg' in lambda node"))?;
-            let id = node_text(&id, src)?;
+            let params: Vec<Id> = node
+                .children_by_field_name("params", &mut  cursor)
+                .map(|x| node_text(&x, src))
+                .collect::<Result<Vec<Id>>>()?;
 
             let body = node.child_by_field_name("body").ok_or(anyhow::format_err!("could not find field 'body' in lambda node"))?;
             let body = to_ast(body, src)?;
 
-            let term = Term::Lam(id, Rc::new(body));
+            let term = Term::Lam(params, Rc::new(body));
             Ok(term)
         },
         "access" => {
@@ -215,6 +259,25 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             let property = node_text(&property, src)?;
 
             let term = Term::Access(Rc::new(term), property);
+            Ok(term)
+        },
+        "block" => {
+            let def_lhs: Vec<Id> = node
+                .children_by_field_name("def_lhs", &mut  cursor)
+                .map(|x| node_text(&x, src))
+                .collect::<Result<Vec<Id>>>()?;
+
+            let def_rhs: Vec<Term> = node
+                .children_by_field_name("def_rhs", &mut  cursor)
+                .map(|x| to_ast(x, src))
+                .collect::<Result<Vec<Term>>>()?;
+
+            let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
+            let term = to_ast(term, src)?;
+
+            let defs = def_lhs.into_iter().zip(def_rhs.into_iter()).collect();
+
+            let term = Term::Block(defs, Rc::new(term));
             Ok(term)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))

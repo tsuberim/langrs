@@ -13,7 +13,8 @@ pub enum Value {
     Tag(Id, Rc<Value>),
     Record(HashMap<String, Rc<Value>>),
     List(Vec<Rc<Value>>),
-    Closure(Env, Id, Rc<Term>)
+    Closure(ValueEnv, Vec<Id>, Rc<Term>),
+    Builtin(&'static str, fn (Vec<Rc<Value>>) -> Result<Rc<Value>>)
 }
 
 impl Display for Value {
@@ -36,18 +37,20 @@ impl Display for Value {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Value::Closure(_, arg, body) => write!(f, "<closure {} -> {}>", arg.green(), body)
+            Value::Closure(_, params, body) => write!(f, "<closure \\{} -> {}>", params.join(", ").green(), body),
+            Value::Builtin(name, _) => write!(f, "<builtin {}>", name),
         }
     }
 }
 
 
-type Env = HashMap<Id, Rc<Value>>;
+pub type ValueEnv = HashMap<Id, Rc<Value>>;
 
-pub fn eval(term: &Term, env: &Env) -> Result<Rc<Value>> {
+pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
     match term {
         Term::Lit(lit) => Ok(Rc::new(Value::Lit(lit.clone()))),
         Term::Var(id) => {
+            
             if let Some(val) = env.get(id) {
                 Ok(Rc::clone(val))
             } else {
@@ -69,17 +72,36 @@ pub fn eval(term: &Term, env: &Env) -> Result<Rc<Value>> {
             let vals = items.into_iter().map(|x| eval(x, env)).collect::<Result<Vec<Rc<Value>>>>()?;
             Ok(Rc::new(Value::List(vals)))
         },
-        Term::App(f, arg) => {
+        Term::App(f, args) => {
             let f = eval(f, env)?;
-            if let Value::Closure(closure_env, arg_name, body) = f.as_ref() {
-                let arg = eval(arg, env)?;
-                eval(body.as_ref(), &closure_env.update(arg_name.clone(), arg))
+            if let Value::Closure(closure_env, params, body) = f.as_ref() {
+
+                let mut extended_env = closure_env.clone();
+                for (param, arg) in params.iter().zip(args) {
+                    let val = eval(arg, env)?;
+                    extended_env = extended_env.update(param.clone(), val);
+                }
+
+                eval(body.as_ref(), &extended_env)
+            } else if let Value::Builtin(_, f) = f.as_ref() {
+                let args = args.iter().map(|term| eval(term, env)).collect::<Result<Vec<Rc<Value>>>>()?;
+                f(args)
             } else {
                 Err(anyhow::format_err!("{} is not a function", f))
             }
             
         },
-        Term::Lam(arg, body) => Ok(Rc::new(Value::Closure(env.clone(), arg.clone(), body.clone()))),
+        Term::Lam(params, body) => {
+            let fv = body.free_vars();
+
+            let env: ValueEnv = env
+                .iter()
+                .filter(|(k, v)| fv.contains(*k))
+                .map(|(k, v)| (k.clone(), Rc::clone(v)))
+                .collect();
+
+            Ok(Rc::new(Value::Closure(env.clone(), params.clone(), body.clone())))
+        },
         Term::Match(term, cases, default) => {
             let val = eval(term, env)?;
             if let Value::Tag(id, payload) = val.as_ref() {
@@ -106,6 +128,13 @@ pub fn eval(term: &Term, env: &Env) -> Result<Rc<Value>> {
                 bail!("cannot access property {} of a non-record {}", property, val)
             }
         },
+        Term::Block(defs, term) => {
+            let mut extended_env = env.clone();
+            for (id, def) in defs {
+                let val = eval(def, env)?;
+                extended_env.insert(id.clone(), val);
+            }
+            eval(term, &extended_env)
+        },
     }
 }
-

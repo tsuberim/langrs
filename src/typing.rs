@@ -1,11 +1,13 @@
-use std::{fmt::Display};
+use std::{fmt::Display, vec};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashmap};
 use anyhow::{Result, Ok, bail};
 
-use crate::term::{Term, Lit};
+use crate::{term::{Term, Lit}, utils::Namer};
 
 type Id = String;
+
+pub type TypeEnv = HashMap<Id, ForAll>;
 
 #[derive(Debug, Clone)]
 pub enum Type {
@@ -84,7 +86,7 @@ impl Display for Type {
 }
 
 #[derive(Debug, Clone)]
-pub struct ForAll(Vec<Id>, Type);
+pub struct ForAll(pub Vec<Id>, pub Type);
 
 impl Display for ForAll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -97,12 +99,11 @@ impl Display for ForAll {
     }
 }
 
-pub struct Infer {
-    var_count: u32,
+struct Infer {
     subst: Subst,
+    namer: Namer,
 }
 
-type TypeEnv = HashMap<Id, ForAll>;
 type Subst = HashMap<Id, Type>;
 
 fn apply(subst: &Subst, t: &Type) -> Type {
@@ -150,7 +151,7 @@ fn compose(s1: &Subst, s2: &Subst) -> Subst {
     out
 }
 
-pub fn generalize(t: Type) -> ForAll {
+fn generalize(namer: &mut Namer,t: Type) -> ForAll {
     let ftv = t.free_type_vars();
     
     let mut subst = HashMap::new();
@@ -161,37 +162,40 @@ pub fn generalize(t: Type) -> ForAll {
         ids.push(new_id.clone());
         subst.insert(id.clone() ,Type::Var(new_id));
     } else {
-        let alphabet = "abcdefghijklmnopqrstuvwxyz";
-        let mut i = 0;
-        let mut j: i32 = 0;
-    
         for id in ftv.into_iter() {
-            let new_id = if j != 0 {format!("{}{}", alphabet.chars().nth(i).unwrap(), j) } else {format!("{}", alphabet.chars().nth(i).unwrap()) };
+            let new_id = namer.name();
             ids.push(new_id.clone());
-            subst.insert(id, Type::Var(new_id));
-            i += 1;
-            if i > alphabet.len() {
-                i = 0;
-                j += 1;
-            }
+            subst.insert(id.clone() ,Type::Var(new_id));
         }
     }
 
     ForAll(ids, apply(&subst, &t))
 }
 
+fn bind(id: &Id, t: &Type) -> Result<Subst> {
+    if t.free_type_vars().contains(id) {
+        bail!("cannot substitute {} into {} - infinite type", id, t)
+    }
+
+    if let Type::Var(v) = t {
+        if v == id {
+            return Ok(HashMap::new());
+        }
+    }
+
+    Ok(HashMap::new().update(id.clone(), t.clone()))
+}
+
 impl Infer {
-    pub fn new() -> Infer {
+    pub fn new(namer: Namer) -> Infer {
         Infer { 
-            var_count: 0, 
+            namer,
             subst: HashMap::new() 
         }
     }
 
     fn fresh(&mut self) -> String {
-        let count = self.var_count;
-        self.var_count += 1;
-        return format!("t{}", count);
+        return self.namer.name();
     }
 
     fn instantiate(&mut self, forall: &ForAll) -> Result<Type> {
@@ -209,24 +213,10 @@ impl Infer {
         self.instantiate(&forall)
     }
 
-    fn bind(&mut self, id: &Id, t: &Type) -> Result<Subst> {
-        if t.free_type_vars().contains(id) {
-            bail!("cannot substitute {} into {} - infinite type", id, t)
-        }
-
-        if let Type::Var(v) = t {
-            if v == id {
-                return Ok(HashMap::new());
-            }
-        }
-
-        Ok(HashMap::new().update(id.clone(), t.clone()))
-    }
-
     fn unify(&mut self, t1: &Type, t2: &Type) -> Result<Subst> {
         match (t1, t2) {
-            (Type::Var(id), t) => self.bind(id, t),
-            (t, Type::Var(id)) => self.bind(id, t),
+            (Type::Var(id), t) => bind(id, t),
+            (t, Type::Var(id)) => bind(id, t),
             (Type::Cons(f1, args1), Type::Cons(f2, args2)) if f1 == f2 && args1.len() == args2.len() => {
                 let mut subst = HashMap::new();
                 for (t1, t2) in args1.iter().zip(args2.iter()) {
@@ -297,7 +287,7 @@ impl Infer {
         }
     }
 
-    pub fn emit(&mut self, t1: Type, t2: Type) -> Result<()> {
+    pub fn assert_eq(&mut self, t1: Type, t2: Type) -> Result<()> {
         let t1 = apply(&self.subst, &t1);
         let t2 = apply(&self.subst, &t2);
         let subst = self.unify(&t1, &t2)?;
@@ -328,23 +318,37 @@ impl Infer {
                 } 
                 Ok(Type::Record { items, union: false, rest: None })
             },
-            Term::App(f, arg) => {
+            Term::App(f, args) => {
                 let tf = self.infer(f, env)?;
-                let t_arg = self.infer(arg, env)?;
+
+                let mut args_ts = vec![];
+                for arg in args {
+                    let t = self.infer(arg, env)?;
+                    args_ts.push(t);
+                }
                 let t_var = Type::Var(self.fresh());
-                self.emit(tf, Type::Cons("Fun".to_string(), vec![t_arg, t_var.clone()]))?;
+                args_ts.push(t_var.clone());
+                
+                self.assert_eq(tf, Type::Cons("Fun".to_string(), args_ts))?;
                 Ok(t_var)
             },
-            Term::Lam(arg, body) => {
-                let t_var = Type::Var(self.fresh());
-                let t_body = self.infer(body, &env.update(arg.clone(), ForAll(vec![], t_var.clone())))?;
-                Ok(Type::Cons("Fun".to_string(), vec![t_var, t_body]))
+            Term::Lam(args, body) => {
+                let mut extended_env = env.clone();
+                let mut args_ts = vec![];
+                for arg in args {
+                    let t_var = Type::Var(self.fresh());
+                    args_ts.push(t_var.clone());
+                    extended_env.insert(arg.clone(), ForAll(vec![], t_var.clone()));
+                }
+                let t_body = self.infer(body, &extended_env)?;
+                args_ts.push(t_body);
+                Ok(Type::Cons("Fun".to_string(), args_ts))
             },
             Term::List(items) => {
                 let out = Type::Var(self.fresh());
                 for term in items.into_iter() {
                     let t = self.infer(term, env)?;
-                    self.emit(out.clone(), t)?
+                    self.assert_eq(out.clone(), t)?
                 }
                 
                 Ok(Type::Cons("List".to_string(), vec!(out)))
@@ -359,17 +363,17 @@ impl Infer {
                     items.insert(tag.clone(), var_type.clone());
 
                     let t = self.infer(result, &env.update(id.clone(), ForAll(vec![], var_type)))?;
-                    self.emit(out.clone(), t)?;
+                    self.assert_eq(out.clone(), t)?;
                 }
 
                 if let Some(default) = default {
                     let t = self.infer(default, env)?;
-                    self.emit(t, out.clone())?
+                    self.assert_eq(t, out.clone())?
                 }
 
                 let t = self.infer(term, env)?;
                 let in_t = Type::Record { items, union: true, rest: if let Some(_) = default { Some(self.fresh()) } else { None } };
-                self.emit(t, in_t)?;
+                self.assert_eq(t, in_t)?;
 
                 Ok(out)
             },
@@ -377,9 +381,20 @@ impl Infer {
                 let out = Type::Var(self.fresh());
                 let t = self.infer(term, env)?;
                 let rest = self.fresh();
-                self.emit(t, Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
+                self.assert_eq(t, Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
 
                 Ok(out)
+            },
+            Term::Block(defs, term) => {
+                let mut extended_env = env.clone();
+
+                for (id, def) in defs {
+                    let t = self.infer(def, env)?;
+                    extended_env.insert(id.clone(), generalize(&mut self.namer, t));
+                }
+
+                let t = self.infer(term, &extended_env)?;
+                Ok(t)
             },
         }?;
         
@@ -388,3 +403,10 @@ impl Infer {
     }
 }
 
+pub fn infer(term: &Term, env: &TypeEnv) -> Result<ForAll> {
+    
+    let mut infer = Infer::new(Namer::new());
+    let t = infer.infer(term, env)?;
+    let forall = generalize(&mut Namer::new(), t);
+    Ok(forall)
+}

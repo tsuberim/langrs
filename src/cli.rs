@@ -5,11 +5,22 @@ use rustyline::DefaultEditor;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 
-use crate::{term::to_ast, typing::{Infer, generalize, ForAll}, value::eval};
+use crate::{term::to_ast, typing::infer, value::eval};
+
+use clap::{Parser as ClapParser, command};
+
+#[derive(ClapParser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    file: Option<String>
+}
+
+
 
 pub fn repl() -> Result<()> {
     let mut parser = Parser::new();
     parser.set_language(language())?;
+
     let mut rl = DefaultEditor::new()?;
 
     let mut step = || -> Result<()> {
@@ -19,9 +30,7 @@ pub fn repl() -> Result<()> {
 
         let term = to_ast(ast.root_node(), src.as_str())?;
 
-        let mut infer = Infer::new();
-        let t = infer.infer(&term, &HashMap::new())?;
-        let t: ForAll = generalize(t);
+        let t = infer(&term, &HashMap::new())?;
 
         let val = eval(&term, &HashMap::new())?;
 
@@ -43,3 +52,4 @@ pub fn repl() -> Result<()> {
         }
     }
 }
+
