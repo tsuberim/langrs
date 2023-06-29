@@ -1,0 +1,19 @@
+{
+  "name": "tree-sitter-fun",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bindings/node",
+  "scripts": {
+    "build": "tree-sitter generate",
+    "test": "npm run build && tree-sitter test",
+    "test:watch": "nodemon --watch grammar.js --watch test -x \"npm run test\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "nan": "^2.17.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}

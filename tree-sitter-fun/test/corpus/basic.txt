@@ -1,0 +1,154 @@
+==================
+Number
+==================
+12312
+---
+(source_file
+  (num)
+)
+
+==================
+String
+==================
+`somestring`
+---
+(source_file
+  (str)
+)
+
+==================
+Identifier
+==================
+x
+---
+(source_file
+  (id)
+)
+
+==================
+Constructor
+==================
+X
+---
+(source_file
+  (cons (cons_id))
+)
+
+==================
+Constructor with payload
+==================
+X 2
+---
+(source_file
+  (cons (cons_id) (num))
+)
+
+==================
+Constructor with record payload
+==================
+X{foo: 2}
+---
+(source_file
+  (cons (cons_id) (record (id) (num)))
+)
+
+==================
+Lambda
+==================
+\x -> x
+---
+(source_file
+  (lam (id) (id))
+)
+
+==================
+Application
+==================
+@(\x -> x)(32)
+---
+(source_file
+  (app (parens (lam (id) (id))) (num))
+)
+
+==================
+Record
+==================
+{
+  foo: 2,
+  bar: `str`,
+  baz: {}
+}
+---
+(source_file
+  (record 
+    (id) (num)
+    (id) (str)
+    (id) (record)
+  )
+)
+
+
+==================
+List
+==================
+[1,2,3]
+---
+(source_file
+  (list 
+    (num)
+    (num)
+    (num)
+  )
+)
+
+==================
+Match
+==================
+when y is Foo z -> 2; Bar x -> x
+---
+(source_file
+  (match 
+    (id)
+    (cons_id)
+    (id)
+    (num)
+    (cons_id)
+    (id)
+    (id)
+  )
+)
+
+==================
+Match else
+==================
+when y is Foo z -> 2 else 5
+---
+(source_file
+  (match 
+    (id)
+    (cons_id)
+    (id)
+    (num)
+    (num)
+  )
+)
+
+==================
+Match nested
+==================
+when y is Bar x -> when x is Foo z -> 2
+---
+(source_file
+  (match 
+    (id)
+    (cons_id)
+    (id)
+    (match
+      (id)
+      (cons_id)
+      (id)
+      (num)
+    )
+  )
+)
+
