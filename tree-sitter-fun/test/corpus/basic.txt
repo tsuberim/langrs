@@ -26,30 +26,30 @@ x
 )
 
 ==================
-Constructor
+tagtructor
 ==================
 X
 ---
 (source_file
-  (cons (cons_id))
+  (tag (tag_id))
 )
 
 ==================
-Constructor with payload
+tagtructor with payload
 ==================
 X 2
 ---
 (source_file
-  (cons (cons_id) (num))
+  (tag (tag_id) (num))
 )
 
 ==================
-Constructor with record payload
+tagtructor with record payload
 ==================
 X{foo: 2}
 ---
 (source_file
-  (cons (cons_id) (record (id) (num)))
+  (tag (tag_id) (record (id) (num)))
 )
 
 ==================
@@ -109,10 +109,10 @@ when y is Foo z -> 2; Bar x -> x
 (source_file
   (match 
     (id)
-    (cons_id)
+    (tag_id)
     (id)
     (num)
-    (cons_id)
+    (tag_id)
     (id)
     (id)
   )
@@ -126,7 +126,7 @@ when y is Foo z -> 2 else 5
 (source_file
   (match 
     (id)
-    (cons_id)
+    (tag_id)
     (id)
     (num)
     (num)
@@ -141,11 +141,11 @@ when y is Bar x -> when x is Foo z -> 2
 (source_file
   (match 
     (id)
-    (cons_id)
+    (tag_id)
     (id)
     (match
       (id)
-      (cons_id)
+      (tag_id)
       (id)
       (num)
     )

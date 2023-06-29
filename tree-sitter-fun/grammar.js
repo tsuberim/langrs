@@ -15,8 +15,8 @@ module.exports = grammar({
       source_file: $ => field('term',$._term),
       
       id: $ => /[a-z][a-zA-Z0-9_]*/,
-      cons_id: $ => /[A-Z][a-zA-Z0-9_]*/,
-      cons: $ => prec.left(1, seq(field('name', $.cons_id), optional(field('payload', $._term)))),
+      tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
+      tag: $ => prec.left(1, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
 
       str: $ => seq('`', /[^`]*/, '`'),
       num: $ => /[0-9]+/,
@@ -32,12 +32,12 @@ module.exports = grammar({
           'when', 
           field('term', $._term), 
           'is', 
-          sep1(seq(field('case_cons', $.cons_id), field('case_id', $.id), '->', field('case_result', $._term)), ';'), 
+          sep1(seq(field('case_tag', $.tag_id), field('case_id', $.id), '->', field('case_result', $._term)), ';'), 
           optional(seq('else', field('else', $._term)))
         )
       ),
 
       parens: $ => seq('(', field('term', $._term), ')'),
-      _term: $ => choice($._lit, $.id, $.cons, $.record, $.list, $.match, $.app, $.lam, $.parens),
+      _term: $ => choice($._lit, $.id, $.tag, $.record, $.list, $.match, $.app, $.lam, $.parens),
     }
   });
