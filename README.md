@@ -1,7 +1,5 @@
-# func - a funky programming language
+# Fun - A purely functional, strongly-typed functional language
 
 Features:
-1. Purely functional
-2. Stongly & Statically typed (Hindley Milner)
-3. Full type inference
-4. Compiles to EVM (Ethereum Virutal Machine)
+1. Fully type inference (Hindley-Milner type inference)
+2. Algebraic data types

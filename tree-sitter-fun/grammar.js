@@ -16,9 +16,11 @@ module.exports = grammar({
       
       id: $ => /[a-z][a-zA-Z0-9_]*/,
       tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
-      tag: $ => prec.left(1, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
+      sym: $ => /[!@#$%^&*_+]+/,
+      tag: $ => prec.right(3, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
 
-      str: $ => seq('`', /[^`]*/, '`'),
+      str_lit: $ => /[^`\{\}]+/,
+      str: $ => seq('`', repeat(choice(field('fragment', $.str_lit), seq('{', field('term',$._term) , '}'))), '`'),
       num: $ => /[0-9]+/,
 
       _lit: $ => choice($.str, $.num),
@@ -26,6 +28,7 @@ module.exports = grammar({
       record: $ => seq('{', sep(seq(field('keys', $.id), ':', field('values', $._term)), ','), '}'),
       list: $ => seq('[', sep(field('items', $._term), ','), ']'),
       app: $ => prec.left(1,seq(field('f', $._term), '(', sep1(field('args', $._term), ','), ')')),
+      infix_app: $ => prec.left(2, seq(field('lhs', $._term), field('f', $.sym)  ,seq(field('rhs', $._term)))),
       lam: $ => seq('\\', field('params', sep1($.id, ',')), '->', field('body', $._term)),
       access: $ => prec.left(2,seq(field('term', $._term), '.', field('property', $.id))),
       match: $ => prec.right(
@@ -38,16 +41,19 @@ module.exports = grammar({
         )
       ),
 
-      block: $ => seq('(', sep(seq(field('def_lhs', $.id), '=', field('def_rhs',$._term)) ,'\n'), field('term', $._term), ')'),
+      block: $ => seq('(', sep(seq(field('def_lhs', choice($.id, $.sym)), '=', field('def_rhs',$._term)) ,/\n+/), field('term', $._term), ')'),
+
       _term: $ => choice(
         $._lit, 
         $.id, 
+        $.sym,
         $.tag, 
         $.record, 
         $.list, 
         $.match, 
         $.app, 
-        $.access, 
+        $.infix_app, 
+        $.access,
         $.lam, 
         $.block
       ),

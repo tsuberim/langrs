@@ -13,7 +13,29 @@ String
 `somestring`
 ---
 (source_file
+  (str (str_lit))
+)
+
+==================
+Empty String
+==================
+``
+---
+(source_file
   (str)
+)
+
+==================
+Template String
+==================
+`hello {name}, nice to meet you`
+---
+(source_file
+  (str 
+    (str_lit) 
+    (id) 
+    (str_lit)
+  )
 )
 
 ==================
@@ -101,7 +123,7 @@ Record
 (source_file
   (record 
     (id) (num)
-    (id) (str)
+    (id) (str (str_lit))
     (id) (record)
   )
 )
@@ -180,6 +202,20 @@ x.name
   (access 
     (id)
     (id)
+  )
+)
+
+
+==================
+Infix application
+==================
+1 + 1
+---
+(source_file
+  (infix_app 
+    (num)
+    (sym)
+    (num)
   )
 )
 

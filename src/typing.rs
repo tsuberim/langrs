@@ -74,10 +74,10 @@ impl Display for Type {
                 }
             },
             Type::Cons(name, args) => {
-                let args: Vec<String> = args.iter().map(|x| format!("{}", x)).collect();
                 if args.len() == 0 { 
                     write!(f, "{}", name.blue()) 
                 } else {
+                    let args: Vec<String> = args.iter().map(|x| format!("{}", x)).collect();
                     write!(f, "{}<{}>", name.blue(), args.join(", "))
                 }
             },
@@ -262,9 +262,11 @@ impl Infer {
                 
                 let t1_minus_t2: HashMap<String, Type> = items1.clone().into_iter().filter(|(k, _)| !items2.contains_key(k)).collect();
                 let t2_minus_t1: HashMap<String, Type> = items2.clone().into_iter().filter(|(k, _)| !items1.contains_key(k)).collect();
-
+                
                 let assignable_to_t1 = t2_minus_t1.len() == 0 || rest1.is_some();
                 let assignable_to_t2 = t1_minus_t2.len() == 0 || rest2.is_some();
+
+                
 
                 if rest.is_some() || (assignable_to_t1 && assignable_to_t2) {
                     if let Some(r1) = rest1 {
@@ -389,8 +391,8 @@ impl Infer {
                 let mut extended_env = env.clone();
 
                 for (id, def) in defs {
-                    let t = self.infer(def, env)?;
-                    extended_env.insert(id.clone(), generalize(&mut self.namer, t));
+                    let t = self.infer(def, &extended_env)?;
+                    extended_env = extended_env.update(id.clone(), generalize(&mut self.namer, t));
                 }
 
                 let t = self.infer(term, &extended_env)?;

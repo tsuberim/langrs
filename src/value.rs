@@ -1,20 +1,20 @@
 use std::{rc::Rc, fmt::Display};
 use colored::Colorize;
-use im::{HashMap};
+use im::HashMap;
 use anyhow::{Result, Ok, bail};
 
 use crate::term::{Lit, Term};
 
 type Id = String;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
     Lit(Lit),
     Tag(Id, Rc<Value>),
     Record(HashMap<String, Rc<Value>>),
     List(Vec<Rc<Value>>),
     Closure(ValueEnv, Vec<Id>, Rc<Term>),
-    Builtin(&'static str, fn (Vec<Rc<Value>>) -> Result<Rc<Value>>)
+    Builtin(&'static str, fn (&ValueEnv, &Vec<Rc<Value>>) -> Result<Rc<Value>>)
 }
 
 impl Display for Value {
@@ -74,29 +74,15 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
         },
         Term::App(f, args) => {
             let f = eval(f, env)?;
-            if let Value::Closure(closure_env, params, body) = f.as_ref() {
-
-                let mut extended_env = closure_env.clone();
-                for (param, arg) in params.iter().zip(args) {
-                    let val = eval(arg, env)?;
-                    extended_env = extended_env.update(param.clone(), val);
-                }
-
-                eval(body.as_ref(), &extended_env)
-            } else if let Value::Builtin(_, f) = f.as_ref() {
-                let args = args.iter().map(|term| eval(term, env)).collect::<Result<Vec<Rc<Value>>>>()?;
-                f(args)
-            } else {
-                Err(anyhow::format_err!("{} is not a function", f))
-            }
-            
+            let args = args.iter().map(|term| eval(term, env)).collect::<Result<Vec<Rc<Value>>>>()?;
+            apply(env, f, &args)
         },
         Term::Lam(params, body) => {
             let fv = body.free_vars();
 
             let env: ValueEnv = env
                 .iter()
-                .filter(|(k, v)| fv.contains(*k))
+                .filter(|(k, _v)| fv.contains(*k))
                 .map(|(k, v)| (k.clone(), Rc::clone(v)))
                 .collect();
 
@@ -131,10 +117,25 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
         Term::Block(defs, term) => {
             let mut extended_env = env.clone();
             for (id, def) in defs {
-                let val = eval(def, env)?;
-                extended_env.insert(id.clone(), val);
+                let val = eval(def, &extended_env)?;
+                extended_env = extended_env.update(id.clone(), val);
             }
             eval(term, &extended_env)
         },
+    }
+}
+
+pub fn apply(env: &ValueEnv ,f: Rc<Value>, args: &Vec<Rc<Value>>) -> Result<Rc<Value>> {
+    if let Value::Closure(closure_env, params, body) = f.as_ref() {
+        let mut extended_env = closure_env.clone();
+        for (param, val) in params.iter().zip(args) {
+            extended_env = extended_env.update(param.clone(), Rc::clone(val));
+        }
+
+        eval(body.as_ref(), &extended_env)
+    } else if let Value::Builtin(_, f) = f.as_ref() {
+        f(env, args)
+    } else {
+        Err(anyhow::format_err!("{} is not a function", f))
     }
 }

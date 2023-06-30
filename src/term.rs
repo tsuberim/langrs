@@ -1,4 +1,4 @@
-use std::{rc::Rc, fmt::{Display, write}, hash::Hash};
+use std::{rc::Rc, fmt::{Display}};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashset};
 use anyhow::{Result, Ok, bail};
@@ -15,7 +15,7 @@ pub enum Lit {
 impl Display for Lit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Lit::Str(str) => str.blue().fmt(f),
+            Lit::Str(str) => write!(f, "`{}`", str.blue()),
             Lit::Num(n) => n.to_string().blue().fmt(f),
         }
     }
@@ -44,7 +44,7 @@ impl Term {
             Term::Lit(_) => hashset![],
             Term::Var(v) => hashset![v.clone()],
             Term::Tag(_, payload) => payload.free_vars(),
-            Term::Record(items) => items.into_iter().map(|(k, v)| v.free_vars()).fold(hashset![], HashSet::union),
+            Term::Record(items) => items.into_iter().map(|(_k, v)| v.free_vars()).fold(hashset![], HashSet::union),
             Term::Match(term, cases, default) => {
                 let mut fv: HashSet<String> = term.free_vars();
                 for (_, (id, result)) in cases {
@@ -56,9 +56,9 @@ impl Term {
                 fv
             },
             Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
-            Term::Access(x, prop) => x.free_vars(),
+            Term::Access(x, _prop) => x.free_vars(),
             Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
-            Term::Block(defs, term) => todo!(),
+            Term::Block(_defs, _term) => todo!(),
             Term::Lam(params, body) => {
                 let mut fv = body.free_vars();
                 for param in params {
@@ -137,10 +137,30 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in parens node"))?;
             to_ast(term, src)
         },
-        "str" => {
-            let lit = Lit::Str(node_text(&node, src)?);
+        "str_lit" => {
+            let text = node_text(&node, src)?;
+            let lit = Lit::Str(text);
             let term = Term::Lit(lit);
             Ok(term)
+        },
+        "str" => {
+            let mut cursor = node.walk();
+            let terms: Vec<Term> = node
+                .named_children(&mut  cursor)
+                .map(|x| to_ast(x, src))
+                .collect::<Result<Vec<Term>>>()?;
+
+            let t = terms
+                .into_iter()
+                .fold(
+                    Term::Lit(Lit::Str("".to_string())), 
+                    |acc, term| 
+                        Term::App(
+                            Rc::new(Term::Var("++".to_string())), 
+                            vec![acc, term]
+                        )
+                );
+            Ok(t)
         }
         "num" => {
             let lit = Lit::Num(node_text(&node, src)?.parse()?);
@@ -148,6 +168,10 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             Ok(term)
         },
         "id" => {
+            let term = Term::Var(node_text(&node, src)?);
+            Ok(term)
+        },
+        "sym" => {
             let term = Term::Var(node_text(&node, src)?);
             Ok(term)
         },
@@ -237,6 +261,19 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
                 .collect::<Result<Vec<Term>>>()?;
 
             let term = Term::App(Rc::new(f), args);
+            Ok(term)
+        },
+        "infix_app" => {
+            let lhs = node.child_by_field_name("lhs").ok_or(anyhow::format_err!("could not find field 'lhs' in infix application node"))?;
+            let lhs = to_ast(lhs, src)?;
+
+            let rhs = node.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in infix application node"))?;
+            let rhs = to_ast(rhs, src)?;
+
+            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in infix application node"))?;
+            let f = node_text(&f, src)?;
+
+            let term = Term::App(Rc::new(Term::Var(f)), vec![lhs, rhs]);
             Ok(term)
         },
         "lam" => {
