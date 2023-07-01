@@ -100,7 +100,23 @@ pub struct ForAll(pub Vec<Id>, pub Type);
 
 impl Display for ForAll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ForAll(ids, t) = self;
+        let mut namer = Namer::new();
+
+
+        let ForAll(_, t) = self;
+
+        let ftv = t.free_type_vars();
+        let mut subst = HashMap::new();
+        for (id, count) in &ftv {
+            if *count == 1 {
+                subst.insert(id.clone(), Type::Var("*".to_string()));
+            } else {
+                subst.insert(id.clone(), Type::Var(namer.name()));
+            }
+        }
+        let ids: Vec<String> = ftv.keys().cloned().filter(|k| *k == "*".to_string()).collect();
+        let t = apply(&subst, t);
+        
         if ids.len() > 1 {
             write!(f, "∀{}. {}", ids.join(" ").green(), t)
         } else {
@@ -161,34 +177,20 @@ fn compose(s1: &Subst, s2: &Subst) -> Subst {
     out
 }
 
-fn generalize(namer: &mut Namer,t: Type) -> ForAll {
+pub fn generalize(t: Type) -> ForAll {
     let ftv = t.free_type_vars();
-    let mut subst = HashMap::new();
-    let mut ids = vec![];
-    for (id, count) in ftv.into_iter() {
-        let new_id = if count == 1 { 
-            "*".to_string() 
-        } else {
-            let name = namer.name();
-            ids.push(name.clone());
-            name
-        };
-        
-        subst.insert(id.clone() ,Type::Var(new_id));
-    }
-
-    ForAll(ids, apply(&subst, &t))
+    ForAll(ftv.keys().cloned().collect(), t)
 }
 
 fn bind(id: &Id, t: &Type) -> Result<Subst> {
-    if t.free_type_vars().contains_key(id) {
-        bail!("cannot substitute {} into {} - infinite type", id, t)
-    }
-
     if let Type::Var(v) = t {
         if v == id {
             return Ok(HashMap::new());
         }
+    }
+
+    if t.free_type_vars().contains_key(id) {
+        bail!("cannot substitute {} into {} - infinite type", id, t)
     }
 
     Ok(HashMap::new().update(id.clone(), t.clone()))
@@ -399,14 +401,16 @@ impl Infer {
                 let mut extended_env = env.clone();
 
                 for (id, def) in defs {
-                    let mut t = self.infer(def, &extended_env)?;
+                    let t = self.infer(def, &extended_env)?;
                     if let Some(declared_type) = typings.get(id) {
-                        self.assert_eq(&t, declared_type)?;
+                        let declared_type = self.instantiate(declared_type)?;
+                        self.assert_eq(&t, &declared_type)?;
                     }
-                    t = apply(&self.subst, &t);
-                    extended_env = extended_env.update(id.clone(), generalize(&mut self.namer, t));
+                    let t = apply(&self.subst, &t);
+                    extended_env = extended_env.update(id.clone(), ForAll(vec![], t));
                 }
 
+                
                 let t = self.infer(term, &extended_env)?;
                 Ok(t)
             },
@@ -418,10 +422,9 @@ impl Infer {
 }
 
 pub fn infer(term: &Term, env: &TypeEnv) -> Result<ForAll> {
-    
     let mut infer = Infer::new(Namer::new());
     let t = infer.infer(term, env)?;
-    let forall = generalize(&mut Namer::new(), t);
+    let forall = generalize(t);
     Ok(forall)
 }
 
@@ -502,7 +505,7 @@ pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
             Ok(Type::Record { items, union: true, rest })
         },
         "type_app" => {
-            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in application node"))?;
+            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in type_app node"))?;
             let f = node_text(&f, src)?;
 
             let args: Vec<Type> = node
@@ -512,6 +515,25 @@ pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
 
             let term = Type::Cons(f, args);
             Ok(term)
+        },
+        "type_lam" => {
+            let mut args: Vec<Type> = node
+                .children_by_field_name("args", &mut  cursor)
+                .map(|x| to_type_ast(x, src))
+                .collect::<Result<Vec<Type>>>()?;
+            
+            let f = node.child_by_field_name("result").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
+            let f = to_type_ast(f, src)?;
+
+            args.push(f);
+
+            let term = Type::Cons("Fun".to_string(), args);
+            Ok(term)
+        },
+        "type_parens" => {
+            let t = node.child_by_field_name("type").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
+            let t = to_type_ast(t, src)?;
+            Ok(t)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))
     }

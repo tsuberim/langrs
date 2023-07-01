@@ -11,12 +11,19 @@ module.exports = grammar({
   
     word: $ => $.id,
 
+    extras: $ => [
+      $._comment,
+      /[\s\f\uFEFF\u2060\u200B]|\r?\n/
+    ],
+
     rules: {
       source_file: $ => field('term',$._term),
+
+      _comment: $=> token.immediate(/#.*/),
       
       id: $ => /[_a-z][a-zA-Z0-9_]*/,
       tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
-      sym: $ => /[!@#$%^&\*\+><]+/,
+      sym: $ => /[!@#$%^&\*\+><|]+/,
       tag: $ => prec.right(3, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
 
       str_lit: $ => /[^`\{\}]+/,
@@ -29,8 +36,9 @@ module.exports = grammar({
       list: $ => seq('[', sep(field('items', $._term), ','), ']'),
       app: $ => prec.left(1,seq(field('f', $._term), '(', sep1(field('args', $._term), ','), ')')),
       infix_app: $ => prec.left(2, seq(field('lhs', $._term), field('f', $.sym)  ,seq(field('rhs', $._term)))),
-      lam: $ => seq('\\', field('params', sep1($.id, ',')), '->', field('body', $._term)),
+      lam: $ => seq('\\', sep1(field('params', $.id), ','), '->', field('body', $._term)),
       access: $ => prec.left(2,seq(field('term', $._term), '.', field('property', $.id))),
+      curied_access: $ => seq('.', field('property', $.id)),
       match: $ => prec.right(
         seq(
           'when', 
@@ -56,9 +64,10 @@ module.exports = grammar({
         $.tag, 
         $.record, 
         $.list, 
-        $.match, 
+        $.match,
         $.app, 
         $.infix_app, 
+        $.curied_access,
         $.access,
         $.lam, 
         $.block
@@ -67,11 +76,15 @@ module.exports = grammar({
       type_record: $ => seq('{', sep(seq(field('keys', $.id), ':', field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), '}'),
       type_union: $ => seq('[', sep(seq(field('keys', $.tag_id), field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), ']'),
       type_app: $ => seq(field('f',$.tag_id), optional(seq('<', sep1(field('args', $._type), ','), '>'))),
+      type_lam: $ => prec.right(seq('\\',sep1(field('args', $._type), ','), '->', field('result',$._type))),
+      type_parens: $ => seq('(', field('type', $._type), ')'),
       _type: $ => choice(
         $.id,
         $.type_record,
         $.type_union,
-        $.type_app
+        $.type_app,
+        $.type_lam,
+        $.type_parens
       )
     }
   });

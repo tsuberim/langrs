@@ -38,7 +38,7 @@ impl Display for Value {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Value::Closure(_, params, body) => write!(f, "<closure \\{} -> {}>", params.join(", ").green(), body),
+            Value::Closure(_, params, body) => write!(f, "<closure>"),
             Value::Builtin(name, _) => write!(f, "<builtin {}>", name),
             Value::Task(_) => write!(f, "<task>"),
         }
@@ -116,7 +116,7 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
                 bail!("cannot access property {} of a non-record {}", property, val)
             }
         },
-        Term::Block(typings, defs, term) => {
+        Term::Block(_, defs, term) => {
             let mut extended_env = env.clone();
             for (id, def) in defs {
                 let val = eval(def, &extended_env)?;

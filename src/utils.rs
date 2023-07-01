@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use anyhow::{Result, Ok, bail};
+use anyhow::{Result, Ok};
 
 const ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
 
