@@ -235,6 +235,7 @@ Typings
   x : List<a>
   x : [Bar {|a}]
   x : {name: Str}
+  x : \Num, a, (\b -> c) -> List<a>
   x
 )
 ---
@@ -255,6 +256,15 @@ Typings
     (type_def 
       (id) 
       (type_record (id) (type_app (tag_id)))
+    )
+    (type_def
+      (id)
+      (type_lam
+        (type_app (tag_id))
+        (id)
+        (type_parens (type_lam (id) (id)))
+        (type_app (tag_id) (id))
+      )
     )
     (id)
   )

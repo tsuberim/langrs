@@ -76,11 +76,15 @@ module.exports = grammar({
       type_record: $ => seq('{', sep(seq(field('keys', $.id), ':', field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), '}'),
       type_union: $ => seq('[', sep(seq(field('keys', $.tag_id), field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), ']'),
       type_app: $ => seq(field('f',$.tag_id), optional(seq('<', sep1(field('args', $._type), ','), '>'))),
+      type_lam: $ => prec.right(seq('\\',sep1(field('args', $._type), ','), '->', field('result',$._type))),
+      type_parens: $ => seq('(', field('type', $._type), ')'),
       _type: $ => choice(
         $.id,
         $.type_record,
         $.type_union,
-        $.type_app
+        $.type_app,
+        $.type_lam,
+        $.type_parens
       )
     }
   });

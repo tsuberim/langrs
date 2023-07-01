@@ -505,7 +505,7 @@ pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
             Ok(Type::Record { items, union: true, rest })
         },
         "type_app" => {
-            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in application node"))?;
+            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in type_app node"))?;
             let f = node_text(&f, src)?;
 
             let args: Vec<Type> = node
@@ -515,6 +515,25 @@ pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
 
             let term = Type::Cons(f, args);
             Ok(term)
+        },
+        "type_lam" => {
+            let mut args: Vec<Type> = node
+                .children_by_field_name("args", &mut  cursor)
+                .map(|x| to_type_ast(x, src))
+                .collect::<Result<Vec<Type>>>()?;
+            
+            let f = node.child_by_field_name("result").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
+            let f = to_type_ast(f, src)?;
+
+            args.push(f);
+
+            let term = Type::Cons("Fun".to_string(), args);
+            Ok(term)
+        },
+        "type_parens" => {
+            let t = node.child_by_field_name("type").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
+            let t = to_type_ast(t, src)?;
+            Ok(t)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))
     }
