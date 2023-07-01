@@ -18,7 +18,7 @@ impl Namer {
         };
 
         self.letter += 1;
-        if self.letter > ALPHABET.len() {
+        if self.letter >= ALPHABET.len() {
             self.letter = 0;
             self.index += 1;
         }

@@ -1,4 +1,4 @@
-use std::{fmt::Display, vec};
+use std::{fmt::Display, vec, hash::Hash};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashmap};
 use anyhow::{Result, Ok, bail};
@@ -20,24 +20,33 @@ pub enum Type {
     Cons(String, Vec<Type>),
 }
 
+fn sum_maps(a: HashMap<Id, u32>, b: HashMap<Id, u32> ) -> HashMap<Id, u32> {
+    let mut out = a.clone();
+    for (id, bn) in b {
+        out.alter(|n| if let Some(n) = n { Some(n + bn) } else {Some(bn)}, id);
+    }
+
+    out
+}
+
 impl Type {
-    pub fn free_type_vars(&self) -> HashSet<Id> {
+    pub fn free_type_vars(&self) -> HashMap<Id, u32> {
         match self {
-            Type::Var(id) => HashSet::new().update(id.clone()),
+            Type::Var(id) => hashmap! {id.clone() => 1},
             Type::Record { items, union: _, rest } => {
-                let mut init = HashSet::new();
+                let mut init = HashMap::new();
                 if let Some(id) = rest {
-                    init.insert(id.clone());
+                    init.insert(id.clone(), 1);
                 }
 
                 let ftv = items
                     .values()
                     .into_iter()
                     .map(|t| t.free_type_vars())
-                    .fold(init, HashSet::union);
+                    .fold(init, sum_maps);
                 ftv
             },
-            Type::Cons(_, args) => args.iter().map(|x| x.free_type_vars()).fold(HashSet::new(), HashSet::union),
+            Type::Cons(_, args) => args.iter().map(|x| x.free_type_vars()).fold(HashMap::new(), sum_maps),
         }
     }
 }
@@ -156,24 +165,17 @@ fn generalize(namer: &mut Namer,t: Type) -> ForAll {
     
     let mut subst = HashMap::new();
     let mut ids = vec![];
-    if ftv.len() == 1 {
-        let id = ftv.iter().next().unwrap();
-        let new_id = "*".to_string();
+    for (id, count) in ftv.into_iter() {
+        let new_id = if count == 1 { "*".to_string() } else {namer.name()};
         ids.push(new_id.clone());
         subst.insert(id.clone() ,Type::Var(new_id));
-    } else {
-        for id in ftv.into_iter() {
-            let new_id = namer.name();
-            ids.push(new_id.clone());
-            subst.insert(id.clone() ,Type::Var(new_id));
-        }
     }
 
     ForAll(ids, apply(&subst, &t))
 }
 
 fn bind(id: &Id, t: &Type) -> Result<Subst> {
-    if t.free_type_vars().contains(id) {
+    if t.free_type_vars().contains_key(id) {
         bail!("cannot substitute {} into {} - infinite type", id, t)
     }
 
