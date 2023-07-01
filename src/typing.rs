@@ -401,7 +401,8 @@ impl Infer {
                 for (id, def) in defs {
                     let mut t = self.infer(def, &extended_env)?;
                     if let Some(declared_type) = typings.get(id) {
-                        self.assert_eq(&t, declared_type)?;
+                        let declared_type = self.instantiate(declared_type)?;
+                        self.assert_eq(&t, &declared_type)?;
                     }
                     t = apply(&self.subst, &t);
                     extended_env = extended_env.update(id.clone(), generalize(&mut self.namer, t));

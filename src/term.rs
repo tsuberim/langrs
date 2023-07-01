@@ -1,10 +1,10 @@
-use std::{rc::Rc, fmt::{Display}, hash};
+use std::{rc::Rc, fmt::{Display}};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashset, hashmap};
 use anyhow::{Result, Ok, bail};
 use tree_sitter::Node;
 
-use crate::{typing::{Type, to_type_ast}, utils::node_text};
+use crate::{typing::{to_type_ast, ForAll}, utils::node_text};
 
 type Id = String;
 
@@ -36,7 +36,7 @@ pub enum Term {
     List(Vec<Term>),
     Access(Rc<Term>, Id),
     App(Rc<Term>, Vec<Term>),
-    Block(HashMap<Id, Type>, Vec<(Id, Term)>, Rc<Term>), // like a let
+    Block(HashMap<Id, ForAll>, Vec<(Id, Term)>, Rc<Term>), // like a let
     Lam(Vec<Id>, Rc<Term>)
 }
 
@@ -60,7 +60,7 @@ impl Term {
             Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
             Term::Access(x, _prop) => x.free_vars(),
             Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
-            Term::Block(typings, defs, term) => {
+            Term::Block(_, defs, term) => {
                 defs
                     .iter()
                     .fold(term.free_vars(), |acc, (id, term)| acc.without(id).union(term.free_vars()))
@@ -108,7 +108,7 @@ impl Display for Term {
             },
             Term::Lam(params, body) => write!(f, "\\{} -> {}", params.join(", "), body),
             Term::Access(term, property) => write!(f, "{}.{}", term, property),
-            Term::Block(typings, defs, term) => {
+            Term::Block(_, defs, term) => {
                 let defs: Vec<String> = defs.iter().map(|(k, v)| format!("{} = {}", k, v)).collect();
                 write!(f, "({}\n{})", defs.join("\n"), term)
             },
@@ -326,6 +326,7 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
                         
                         let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
                         let rhs = to_type_ast(rhs, src)?;
+                        let rhs = ForAll(rhs.free_type_vars().keys().cloned().collect(), rhs);
 
                         type_defs.insert(lhs, rhs);
                     },
