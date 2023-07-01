@@ -8,6 +8,16 @@ Number
 )
 
 ==================
+Comment
+==================
+# asdfasdf
+12312
+---
+(source_file
+  (num)
+)
+
+==================
 String
 ==================
 `somestring`

@@ -11,8 +11,15 @@ module.exports = grammar({
   
     word: $ => $.id,
 
+    extras: $ => [
+      $._comment,
+      /[\s\f\uFEFF\u2060\u200B]|\r?\n/
+    ],
+
     rules: {
       source_file: $ => field('term',$._term),
+
+      _comment: $=> token.immediate(/#.*/),
       
       id: $ => /[_a-z][a-zA-Z0-9_]*/,
       tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
