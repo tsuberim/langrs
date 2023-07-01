@@ -34,7 +34,7 @@ pub enum Term {
     List(Vec<Term>),
     Access(Rc<Term>, Id),
     App(Rc<Term>, Vec<Term>),
-    Block(HashMap<Id, Term>, Rc<Term>), // like a let
+    Block(Vec<(Id, Term)>, Rc<Term>), // like a let
     Lam(Vec<Id>, Rc<Term>)
 }
 
@@ -58,7 +58,11 @@ impl Term {
             Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
             Term::Access(x, _prop) => x.free_vars(),
             Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
-            Term::Block(_defs, _term) => todo!(),
+            Term::Block(defs, term) => {
+                defs
+                    .iter()
+                    .fold(term.free_vars(), |acc, (id, term)| acc.without(id).union(term.free_vars()))
+            },
             Term::Lam(params, body) => {
                 let mut fv = body.free_vars();
                 for param in params {
@@ -299,22 +303,37 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             Ok(term)
         },
         "block" => {
-            let def_lhs: Vec<Id> = node
-                .children_by_field_name("def_lhs", &mut  cursor)
-                .map(|x| node_text(&x, src))
-                .collect::<Result<Vec<Id>>>()?;
-
-            let def_rhs: Vec<Term> = node
-                .children_by_field_name("def_rhs", &mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
+            
 
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
-            let term = to_ast(term, src)?;
+            let mut term = to_ast(term, src)?;
 
-            let defs = def_lhs.into_iter().zip(def_rhs.into_iter()).collect();
+            let mut cursor = node.walk();
+            let stmts: Vec<Node> = node.children_by_field_name("statement", &mut cursor).collect();
+            for stmt in stmts.iter().rev() {
+                match stmt.kind() {
+                    "def" => {
+                        let lhs = stmt.child_by_field_name("lhs").ok_or(anyhow::format_err!("could not find field 'lhs' in statement node"))?;
+                        let lhs = node_text(&lhs, src)?;
+                        
+                        let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
+                        let rhs = to_ast(rhs, src)?;
 
-            let term = Term::Block(defs, Rc::new(term));
+                        term = Term::Block(vec![(lhs, rhs)], Rc::new(term));
+                    },
+                    "bind" => {
+                        let lhs = stmt.child_by_field_name("lhs");
+                        let lhs = if let Some(lhs) = lhs {node_text(&lhs, src)?} else {"_".to_string()} ;
+                        
+                        let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
+                        let rhs = to_ast(rhs, src)?;
+
+                        term = Term::App(Rc::new(Term::Var("$".to_string())), vec![rhs, Term::Lam(vec![lhs], Rc::new(term))]);
+                    },
+                    _ => bail!("invalid statement kind {}", stmt.kind())
+                }
+            }
+            
             Ok(term)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))

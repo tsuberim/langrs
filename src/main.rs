@@ -97,6 +97,48 @@ fn fold(env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
     }
 }
 
+fn print_fn(env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+    let str = args.get(0).unwrap();
+    if let Value::Lit(Lit::Str(str)) = str.as_ref() {
+        let str = str.clone();
+        Ok(Rc::new(Value::Task(Rc::new(move || -> Result<Rc<Value>> {
+            println!("{}", str);
+            Ok(Rc::new(Value::Record(hashmap!{})))
+        }))))
+    } else {
+        bail!("a")
+    }
+    
+}
+
+fn bind(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+    let task = args.get(0).unwrap();
+    let f = Rc::clone(args.get(1).unwrap());
+
+    if let Value::Task(task) = task.as_ref() {
+        let task = Rc::clone(task);
+        Ok(Rc::new(Value::Task(Rc::new(move || {
+            let val = task()?;
+            let val = apply(&hashmap!{}, f.clone(), &vec![val])?;
+            if let Value::Task(task) = val.as_ref() {
+                task()
+            } else {
+                bail!("asdf")
+            }
+        }))))
+    } else {
+        bail!("bind invoked with non-task")
+    }
+}
+
+fn ret(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+    let val = Rc::clone(args.get(0).unwrap());
+
+    Ok(Rc::new(Value::Task(Rc::new(move || {
+        Ok(val.clone())
+    }))))
+}
+
 fn run(file: &String) -> Result<()> {
     let mut parser = Parser::new();
     parser.set_language(language())?;
@@ -106,17 +148,20 @@ fn run(file: &String) -> Result<()> {
 
     let num = Type::Cons("Num".to_string(), vec![]);
     let str = Type::Cons("Str".to_string(), vec![]);
+
+    let unit = Type::Record { items: hashmap! {}, union: false, rest: None };
+    let void = Type::Record { items: hashmap! {}, union: true, rest: None };
     let context: HashMap<String, (Rc<Value>, ForAll)> = hashmap! {
         "+".to_string() => (
-            Rc::new(Value::Builtin("+", add)),
+            Rc::new(Value::Builtin("+", Box::new(add))),
             ForAll(vec![], Type::Cons("Fun".to_string(), vec![num.clone(), num.clone(), num.clone()]))
         ),
         "++".to_string() => (
-            Rc::new(Value::Builtin("++", concat)),
+            Rc::new(Value::Builtin("++", Box::new(concat))),
             ForAll(vec![], Type::Cons("Fun".to_string(), vec![str.clone(), str.clone(), str.clone()]))
         ),
         "map".to_string() => (
-            Rc::new(Value::Builtin("map", map)),
+            Rc::new(Value::Builtin("map", Box::new(map))),
             ForAll(vec!["a".to_string(), "b".to_string()], Type::Cons("Fun".to_string(), vec![
                 Type::Cons("Fun".to_string(), vec![Type::Var("a".to_string()), Type::Var("b".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("a".to_string())]),
@@ -124,12 +169,37 @@ fn run(file: &String) -> Result<()> {
             ]))
         ),
         "fold".to_string() => (
-            Rc::new(Value::Builtin("fold", fold)),
+            Rc::new(Value::Builtin("fold", Box::new(fold))),
             ForAll(vec!["a".to_string(), "b".to_string()], Type::Cons("Fun".to_string(), vec![
                 Type::Var("b".to_string()),
                 Type::Cons("Fun".to_string(), vec![Type::Var("b".to_string()), Type::Var("a".to_string()), Type::Var("b".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("a".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("b".to_string())])
+            ]))
+        ),
+        "print".to_string() => (
+            Rc::new(Value::Builtin("print", Box::new(print_fn))),
+            ForAll(vec![], Type::Cons("Fun".to_string(), vec![
+                str.clone(),
+                Type::Cons("Task".to_string(), vec![unit.clone(), void.clone()])
+            ]))
+        ),
+        "$".to_string() => (
+            Rc::new(Value::Builtin("$", Box::new(bind))),
+            ForAll(vec!["a".to_string(),"b".to_string(),"c".to_string()], Type::Cons("Fun".to_string(), vec![
+                Type::Cons("Task".to_string(), vec![Type::Var("a".to_string()), Type::Var("b".to_string())]),
+                Type::Cons("Fun".to_string(), vec![
+                    Type::Var("a".to_string()), 
+                    Type::Cons("Task".to_string(), vec![Type::Var("c".to_string()), Type::Var("b".to_string())])
+                ]),
+                Type::Cons("Task".to_string(), vec![Type::Var("c".to_string()), Type::Var("b".to_string())]),
+            ]))
+        ),
+        "return".to_string() => (
+            Rc::new(Value::Builtin("return", Box::new(ret))),
+            ForAll(vec!["a".to_string()], Type::Cons("Fun".to_string(), vec![
+                Type::Var("a".to_string()),
+                Type::Cons("Task".to_string(), vec![Type::Var("a".to_string()), void.clone()]),
             ]))
         ),
     };
@@ -141,9 +211,18 @@ fn run(file: &String) -> Result<()> {
 
     let term = to_ast(tree.root_node(), &src)?;
 
-    let t = infer(&term, &type_env)?;
+    let mut t = infer(&term, &type_env)?;
 
-    let val = eval(&term, &val_env)?;
+    let mut val = eval(&term, &val_env)?;
+
+    match (val.as_ref(), t.clone()) {
+        (Value::Task(f), ForAll(vars, Type::Cons(cons, args))) if vars.len() == 0 && cons == "Task" => {
+            val = f()?;
+            let ty = args.get(0).unwrap();
+            t = ForAll(vec![],ty.clone());
+        }
+        _ => {}
+    }
     
     println!("{} : {}", val, t);
 

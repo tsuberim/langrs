@@ -94,10 +94,8 @@ Block
 ---
 (source_file
   (block
-    (id)
-    (num)
-    (id)
-    (num)
+    (def (id) (num))
+    (def (id) (num))
     (id)
   )
 )

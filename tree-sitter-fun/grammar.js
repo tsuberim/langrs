@@ -14,9 +14,9 @@ module.exports = grammar({
     rules: {
       source_file: $ => field('term',$._term),
       
-      id: $ => /[a-z][a-zA-Z0-9_]*/,
+      id: $ => /[_a-z][a-zA-Z0-9_]*/,
       tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
-      sym: $ => /[!@#$%^&*_+]+/,
+      sym: $ => /[!@#$%^&\*\+><]+/,
       tag: $ => prec.right(3, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
 
       str_lit: $ => /[^`\{\}]+/,
@@ -41,7 +41,12 @@ module.exports = grammar({
         )
       ),
 
-      block: $ => seq('(', sep(seq(field('def_lhs', choice($.id, $.sym)), '=', field('def_rhs',$._term)) ,/\n+/), field('term', $._term), ')'),
+      def: $ => seq(field('lhs', choice($.id, $.sym)), '=', field('rhs',$._term)),
+      bind: $ => seq(field('lhs', choice($.id, $.sym)), '<-', field('rhs',$._term)),
+      block: $ => seq('(', 
+        sep(field('statement',choice($.def, $.bind)) ,/\n+/),
+        field('term', $._term), 
+      ')'),
 
       _term: $ => choice(
         $._lit, 

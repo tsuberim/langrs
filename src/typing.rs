@@ -334,17 +334,17 @@ impl Infer {
                 self.assert_eq(tf, Type::Cons("Fun".to_string(), args_ts))?;
                 Ok(t_var)
             },
-            Term::Lam(args, body) => {
+            Term::Lam(params, body) => {
                 let mut extended_env = env.clone();
-                let mut args_ts = vec![];
-                for arg in args {
+                let mut params_ts = vec![];
+                for param in params {
                     let t_var = Type::Var(self.fresh());
-                    args_ts.push(t_var.clone());
-                    extended_env.insert(arg.clone(), ForAll(vec![], t_var.clone()));
+                    params_ts.push(t_var.clone());
+                    extended_env.insert(param.clone(), ForAll(vec![], t_var.clone()));
                 }
                 let t_body = self.infer(body, &extended_env)?;
-                args_ts.push(t_body);
-                Ok(Type::Cons("Fun".to_string(), args_ts))
+                params_ts.push(t_body);
+                Ok(Type::Cons("Fun".to_string(), params_ts))
             },
             Term::List(items) => {
                 let out = Type::Var(self.fresh());

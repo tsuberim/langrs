@@ -7,14 +7,15 @@ use crate::term::{Lit, Term};
 
 type Id = String;
 
-#[derive(Clone)]
 pub enum Value {
     Lit(Lit),
     Tag(Id, Rc<Value>),
     Record(HashMap<String, Rc<Value>>),
     List(Vec<Rc<Value>>),
     Closure(ValueEnv, Vec<Id>, Rc<Term>),
-    Builtin(&'static str, fn (&ValueEnv, &Vec<Rc<Value>>) -> Result<Rc<Value>>)
+    Builtin(&'static str, Box<dyn Fn (&ValueEnv, &Vec<Rc<Value>>) -> Result<Rc<Value>>>),
+    Task(Rc<dyn Fn () -> Result<Rc<Value>>>),
+    
 }
 
 impl Display for Value {
@@ -39,6 +40,7 @@ impl Display for Value {
             }
             Value::Closure(_, params, body) => write!(f, "<closure \\{} -> {}>", params.join(", ").green(), body),
             Value::Builtin(name, _) => write!(f, "<builtin {}>", name),
+            Value::Task(_) => write!(f, "<task>"),
         }
     }
 }
