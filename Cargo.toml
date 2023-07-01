@@ -12,6 +12,8 @@ colored = "2.0.0"
 im = "15.1.0"
 rustyline = "12.0.0"
 text_io = "0.1.12"
+tokio = { version = "1.29.1", features = ["macros", "fs", "rt", "full"] }
+tower-lsp = "0.19.0"
 tree-sitter = "0.20.10"
 tree-sitter-fun = { path = "./tree-sitter-fun" }
 

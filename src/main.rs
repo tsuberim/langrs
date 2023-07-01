@@ -3,12 +3,14 @@ mod term;
 mod value;
 mod cli;
 mod utils;
+mod lsp;
 
 use std::{fs, rc::Rc, vec};
 
 use anyhow::{Result, Ok, format_err, bail};
 use im::{HashMap, hashmap};
 
+use lsp::Backend;
 use term::Lit;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
@@ -17,25 +19,38 @@ use crate::{cli::repl, term::to_ast, value::{eval, Value, ValueEnv}, typing::{in
 
 use clap::{Parser as ClapParser, command};
 
+
+use tower_lsp::lsp_types::*;
+use tower_lsp::{Client, LanguageServer, LspService, Server};
+
 /// Simple program to greet a person
 #[derive(ClapParser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    file: Option<String>
+    file: Option<String>,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
 
-    if let Some(file) = args.file {
-        run(&file)?
-    } else {
-        repl()?;
-    }
+    let (service, socket) = LspService::new(|client| Backend::new(client));
+    Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+// fn main() -> Result<()> {
+//     let args = Args::parse();
+
+//     if let Some(file) = args.file {
+//         run(&file)?
+//     } else {
+//         repl()?;
+//     }
     
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 fn add(_env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
     let x = args.get(0).unwrap();
