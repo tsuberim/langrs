@@ -299,6 +299,13 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             let term = Term::Access(Rc::new(term), property);
             Ok(term)
         },
+        "curied_access" => {
+            let property = node.child_by_field_name("property").ok_or(anyhow::format_err!("could not find field 'property' in access node"))?;
+            let property = node_text(&property, src)?;
+
+            let term = Term::Lam(vec!["x".to_string()], Rc::new(Term::Access(Rc::new(Term::Var("x".to_string())), property)));
+            Ok(term)
+        },
         "block" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
             let mut term = to_ast(term, src)?;

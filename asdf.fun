@@ -13,5 +13,5 @@ url = `http://www.iana.org/assignments/media-types/application/vnd.api+json`
 blah : Fun<Str, Str>
 blah = \str -> `JSON {str}`
 
-response <- request(url) |> ((\x -> x.body) @ blah)
+response <- request(url) |> (.body @ blah)
 ok(response)

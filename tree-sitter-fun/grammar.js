@@ -31,6 +31,7 @@ module.exports = grammar({
       infix_app: $ => prec.left(2, seq(field('lhs', $._term), field('f', $.sym)  ,seq(field('rhs', $._term)))),
       lam: $ => seq('\\', sep1(field('params', $.id), ','), '->', field('body', $._term)),
       access: $ => prec.left(2,seq(field('term', $._term), '.', field('property', $.id))),
+      curied_access: $ => seq('.', field('property', $.id)),
       match: $ => prec.right(
         seq(
           'when', 
@@ -59,6 +60,7 @@ module.exports = grammar({
         $.match,
         $.app, 
         $.infix_app, 
+        $.curied_access,
         $.access,
         $.lam, 
         $.block
