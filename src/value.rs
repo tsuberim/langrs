@@ -38,7 +38,7 @@ impl Display for Value {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Value::Closure(_, params, body) => write!(f, "<closure \\{} -> {}>", params.join(", ").green(), body),
+            Value::Closure(_, params, body) => write!(f, "<closure>"),
             Value::Builtin(name, _) => write!(f, "<builtin {}>", name),
             Value::Task(_) => write!(f, "<task>"),
         }

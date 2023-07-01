@@ -16,7 +16,7 @@ module.exports = grammar({
       
       id: $ => /[_a-z][a-zA-Z0-9_]*/,
       tag_id: $ => /[A-Z][a-zA-Z0-9_]*/,
-      sym: $ => /[!@#$%^&\*\+><]+/,
+      sym: $ => /[!@#$%^&\*\+><|]+/,
       tag: $ => prec.right(3, seq(field('name', $.tag_id), optional(field('payload', $._term)))),
 
       str_lit: $ => /[^`\{\}]+/,
@@ -29,7 +29,7 @@ module.exports = grammar({
       list: $ => seq('[', sep(field('items', $._term), ','), ']'),
       app: $ => prec.left(1,seq(field('f', $._term), '(', sep1(field('args', $._term), ','), ')')),
       infix_app: $ => prec.left(2, seq(field('lhs', $._term), field('f', $.sym)  ,seq(field('rhs', $._term)))),
-      lam: $ => seq('\\', field('params', sep1($.id, ',')), '->', field('body', $._term)),
+      lam: $ => seq('\\', sep1(field('params', $.id), ','), '->', field('body', $._term)),
       access: $ => prec.left(2,seq(field('term', $._term), '.', field('property', $.id))),
       match: $ => prec.right(
         seq(
@@ -56,7 +56,7 @@ module.exports = grammar({
         $.tag, 
         $.record, 
         $.list, 
-        $.match, 
+        $.match,
         $.app, 
         $.infix_app, 
         $.access,

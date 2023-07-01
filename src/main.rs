@@ -9,11 +9,12 @@ use std::{fs, rc::Rc, vec};
 use anyhow::{Result, Ok, format_err, bail};
 use im::{HashMap, hashmap};
 
+use reqwest::blocking;
 use term::Lit;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 use value::apply;
-use crate::{cli::repl, term::to_ast, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv}};
+use crate::{cli::repl, term::to_ast, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv, generalize}};
 
 use clap::{Parser as ClapParser, command};
 
@@ -147,6 +148,46 @@ fn fail(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
     }))))
 }
 
+fn request(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+    let url = args.get(0).unwrap();
+
+    if let Value::Lit(Lit::Str(url)) = url.as_ref() {
+        let url = url.clone();
+        Ok(Rc::new(Value::Task(Rc::new(move || {
+            let response = reqwest::blocking::get(url.clone())?;
+            let text = response.text()?;
+
+            let val = Value::Record(hashmap!{
+                "body".to_string() => Rc::new(Value::Lit(Lit::Str(text)))
+            });
+
+            Ok(Rc::new(val))
+        }))))    
+    } else {
+        bail!("request invoked with non-str")
+    }
+}
+
+fn pipe(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+    let url = args.get(0).unwrap();
+
+    if let Value::Lit(Lit::Str(url)) = url.as_ref() {
+        let url = url.clone();
+        Ok(Rc::new(Value::Task(Rc::new(move || {
+            let response = reqwest::blocking::get(url.clone())?;
+            let text = response.text()?;
+
+            let val = Value::Record(hashmap!{
+                "body".to_string() => Rc::new(Value::Lit(Lit::Str(text)))
+            });
+
+            Ok(Rc::new(val))
+        }))))    
+    } else {
+        bail!("request invoked with non-str")
+    }
+}
+
 fn run(file: &String) -> Result<()> {
     let mut parser = Parser::new();
     parser.set_language(language())?;
@@ -162,15 +203,15 @@ fn run(file: &String) -> Result<()> {
     let context: HashMap<String, (Rc<Value>, ForAll)> = hashmap! {
         "+".to_string() => (
             Rc::new(Value::Builtin("+", Box::new(add))),
-            ForAll(vec![], Type::Cons("Fun".to_string(), vec![num.clone(), num.clone(), num.clone()]))
+            generalize(Type::Cons("Fun".to_string(), vec![num.clone(), num.clone(), num.clone()]))
         ),
         "++".to_string() => (
             Rc::new(Value::Builtin("++", Box::new(concat))),
-            ForAll(vec![], Type::Cons("Fun".to_string(), vec![str.clone(), str.clone(), str.clone()]))
+            generalize(Type::Cons("Fun".to_string(), vec![str.clone(), str.clone(), str.clone()]))
         ),
         "map".to_string() => (
             Rc::new(Value::Builtin("map", Box::new(map))),
-            ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 Type::Cons("Fun".to_string(), vec![Type::Var("_a".to_string()), Type::Var("_b".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("_a".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("_b".to_string())])
@@ -178,7 +219,7 @@ fn run(file: &String) -> Result<()> {
         ),
         "fold".to_string() => (
             Rc::new(Value::Builtin("fold", Box::new(fold))),
-            ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 Type::Var("_b".to_string()),
                 Type::Cons("Fun".to_string(), vec![Type::Var("_b".to_string()), Type::Var("_a".to_string()), Type::Var("_b".to_string())]),
                 Type::Cons("List".to_string(), vec![Type::Var("_a".to_string())]),
@@ -187,34 +228,44 @@ fn run(file: &String) -> Result<()> {
         ),
         "print".to_string() => (
             Rc::new(Value::Builtin("print", Box::new(print_fn))),
-            ForAll(vec![], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 str.clone(),
                 Type::Cons("Task".to_string(), vec![unit.clone(), Type::Record { items: hashmap! {}, union: true, rest: Some("void_t".to_string()) }])
             ]))
         ),
         "$".to_string() => (
             Rc::new(Value::Builtin("$", Box::new(bind))),
-            ForAll(vec!["_a".to_string(),"_b".to_string(),"c".to_string()], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 Type::Cons("Task".to_string(), vec![Type::Var("_a".to_string()), Type::Var("_b".to_string())]),
                 Type::Cons("Fun".to_string(), vec![
                     Type::Var("_a".to_string()), 
-                    Type::Cons("Task".to_string(), vec![Type::Var("c".to_string()), Type::Var("_b".to_string())])
+                    Type::Cons("Task".to_string(), vec![Type::Var("_c".to_string()), Type::Var("_b".to_string())])
                 ]),
-                Type::Cons("Task".to_string(), vec![Type::Var("c".to_string()), Type::Var("_b".to_string())]),
+                Type::Cons("Task".to_string(), vec![Type::Var("_c".to_string()), Type::Var("_b".to_string())]),
             ]))
         ),
         "ok".to_string() => (
             Rc::new(Value::Builtin("ok", Box::new(ret))),
-            ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 Type::Var("_a".to_string()),
                 Type::Cons("Task".to_string(), vec![Type::Var("_a".to_string()), Type::Var("_b".to_string())]),
             ]))
         ),
         "err".to_string() => (
             Rc::new(Value::Builtin("err", Box::new(fail))),
-            ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
+            generalize(Type::Cons("Fun".to_string(), vec![
                 Type::Var("_a".to_string()),
                 Type::Cons("Task".to_string(), vec![Type::Var("_b".to_string()), Type::Var("_a".to_string())]),
+            ]))
+        ),
+        "request".to_string() => (
+            Rc::new(Value::Builtin("request", Box::new(request))),
+            generalize(Type::Cons("Fun".to_string(), vec![
+                Type::Cons("Str".to_string(), vec![]),
+                Type::Cons("Task".to_string(), vec![
+                    Type::Record { items: hashmap!{"body".to_string() => Type::Cons("Str".to_string(), vec![])}, union: false, rest: None },
+                    Type::Record { items: hashmap!{}, union: true, rest: None },
+                ]),
             ]))
         ),
     };
@@ -231,7 +282,7 @@ fn run(file: &String) -> Result<()> {
     let mut val = eval(&term, &val_env)?;
 
     match (val.as_ref(), t.clone()) {
-        (Value::Task(f), ForAll(vars, Type::Cons(cons, args))) if vars.len() == 0 && cons == "Task" => {
+        (Value::Task(f), ForAll(vars, Type::Cons(cons, args))) if cons == "Task" => {
             val = f()?;
             let ty = args.get(0).unwrap();
             t = ForAll(vec![],ty.clone());
