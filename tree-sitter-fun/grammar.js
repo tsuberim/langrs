@@ -43,8 +43,9 @@ module.exports = grammar({
 
       def: $ => seq(field('lhs', choice($.id, $.sym)), '=', field('rhs',$._term)),
       bind: $ => seq(field('lhs', choice($.id, $.sym)), '<-', field('rhs',$._term)),
+      type_def: $ => seq(field('lhs', choice($.id, $.sym)), ':', field('rhs',$._type)),
       block: $ => seq('(', 
-        sep(field('statement',choice($.def, $.bind)) ,/\n+/),
+        sep(field('statement',choice($.def, $.bind, $.type_def)) ,/\n+/),
         field('term', $._term), 
       ')'),
 
@@ -62,5 +63,15 @@ module.exports = grammar({
         $.lam, 
         $.block
       ),
+    
+      type_record: $ => seq('{', sep(seq(field('keys', $.id), ':', field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), '}'),
+      type_union: $ => seq('[', sep(seq(field('keys', $.tag_id), field('types', $._type)), ','), optional(seq('|', field('rest', $.id))), ']'),
+      type_app: $ => seq(field('f',$.tag_id), optional(seq('<', sep1(field('args', $._type), ','), '>'))),
+      _type: $ => choice(
+        $.id,
+        $.type_record,
+        $.type_union,
+        $.type_app
+      )
     }
   });

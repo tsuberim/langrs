@@ -4,7 +4,7 @@ mod value;
 mod cli;
 mod utils;
 
-use std::{fs, rc::Rc, vec, ops::Add};
+use std::{fs, rc::Rc, vec};
 
 use anyhow::{Result, Ok, format_err, bail};
 use im::{HashMap, hashmap};
@@ -13,7 +13,7 @@ use term::Lit;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 use value::apply;
-use crate::{cli::repl, term::{to_ast}, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv}, utils::Namer};
+use crate::{cli::repl, term::to_ast, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv}};
 
 use clap::{Parser as ClapParser, command};
 
@@ -97,7 +97,7 @@ fn fold(env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
     }
 }
 
-fn print_fn(env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
+fn print_fn(_: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
     let str = args.get(0).unwrap();
     if let Value::Lit(Lit::Str(str)) = str.as_ref() {
         let str = str.clone();
@@ -203,15 +203,15 @@ fn run(file: &String) -> Result<()> {
                 Type::Cons("Task".to_string(), vec![Type::Var("c".to_string()), Type::Var("_b".to_string())]),
             ]))
         ),
-        "return".to_string() => (
-            Rc::new(Value::Builtin("return", Box::new(ret))),
+        "ok".to_string() => (
+            Rc::new(Value::Builtin("ok", Box::new(ret))),
             ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
                 Type::Var("_a".to_string()),
                 Type::Cons("Task".to_string(), vec![Type::Var("_a".to_string()), Type::Var("_b".to_string())]),
             ]))
         ),
-        "fail".to_string() => (
-            Rc::new(Value::Builtin("fail", Box::new(fail))),
+        "err".to_string() => (
+            Rc::new(Value::Builtin("err", Box::new(fail))),
             ForAll(vec!["_a".to_string(), "_b".to_string()], Type::Cons("Fun".to_string(), vec![
                 Type::Var("_a".to_string()),
                 Type::Cons("Task".to_string(), vec![Type::Var("_b".to_string()), Type::Var("_a".to_string())]),

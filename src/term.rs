@@ -1,8 +1,10 @@
-use std::{rc::Rc, fmt::{Display}};
+use std::{rc::Rc, fmt::{Display}, hash};
 use colored::Colorize;
-use im::{HashMap, HashSet, hashset};
+use im::{HashMap, HashSet, hashset, hashmap};
 use anyhow::{Result, Ok, bail};
 use tree_sitter::Node;
+
+use crate::{typing::{Type, to_type_ast}, utils::node_text};
 
 type Id = String;
 
@@ -34,7 +36,7 @@ pub enum Term {
     List(Vec<Term>),
     Access(Rc<Term>, Id),
     App(Rc<Term>, Vec<Term>),
-    Block(Vec<(Id, Term)>, Rc<Term>), // like a let
+    Block(HashMap<Id, Type>, Vec<(Id, Term)>, Rc<Term>), // like a let
     Lam(Vec<Id>, Rc<Term>)
 }
 
@@ -58,7 +60,7 @@ impl Term {
             Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
             Term::Access(x, _prop) => x.free_vars(),
             Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
-            Term::Block(defs, term) => {
+            Term::Block(typings, defs, term) => {
                 defs
                     .iter()
                     .fold(term.free_vars(), |acc, (id, term)| acc.without(id).union(term.free_vars()))
@@ -106,17 +108,12 @@ impl Display for Term {
             },
             Term::Lam(params, body) => write!(f, "\\{} -> {}", params.join(", "), body),
             Term::Access(term, property) => write!(f, "{}.{}", term, property),
-            Term::Block(defs, term) => {
+            Term::Block(typings, defs, term) => {
                 let defs: Vec<String> = defs.iter().map(|(k, v)| format!("{} = {}", k, v)).collect();
                 write!(f, "({}\n{})", defs.join("\n"), term)
             },
         }
     }
-}
-
-fn node_text(node: &Node, src: &str) -> Result<String> {
-    let str = node.utf8_text(src.as_bytes())?;
-    return Ok(str.into());
 }
 
 pub fn to_ast(node: Node, src: &str) -> Result<Term> {
@@ -303,13 +300,15 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
             Ok(term)
         },
         "block" => {
-            
-
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
             let mut term = to_ast(term, src)?;
 
             let mut cursor = node.walk();
             let stmts: Vec<Node> = node.children_by_field_name("statement", &mut cursor).collect();
+
+            let mut defs = vec![];
+            let mut type_defs = hashmap!{};
+
             for stmt in stmts.iter().rev() {
                 match stmt.kind() {
                     "def" => {
@@ -319,9 +318,24 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
                         let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
                         let rhs = to_ast(rhs, src)?;
 
-                        term = Term::Block(vec![(lhs, rhs)], Rc::new(term));
+                        defs.push((lhs, rhs));
+                    },
+                    "type_def" => {
+                        let lhs = stmt.child_by_field_name("lhs").ok_or(anyhow::format_err!("could not find field 'lhs' in statement node"))?;
+                        let lhs = node_text(&lhs, src)?;
+                        
+                        let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
+                        let rhs = to_type_ast(rhs, src)?;
+
+                        type_defs.insert(lhs, rhs);
                     },
                     "bind" => {
+                        if defs.len() > 0 || type_defs.len() > 0 {
+                            term = Term::Block(type_defs, defs.clone(), Rc::new(term));
+                            defs = vec![];
+                            type_defs = hashmap!{};
+                        }
+
                         let lhs = stmt.child_by_field_name("lhs");
                         let lhs = if let Some(lhs) = lhs {node_text(&lhs, src)?} else {"_".to_string()} ;
                         
@@ -332,6 +346,10 @@ pub fn to_ast(node: Node, src: &str) -> Result<Term> {
                     },
                     _ => bail!("invalid statement kind {}", stmt.kind())
                 }
+            }
+
+            if defs.len() > 0 || type_defs.len() > 0 {
+                term = Term::Block(type_defs.clone(), defs.clone(), Rc::new(term));
             }
             
             Ok(term)

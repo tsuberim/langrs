@@ -116,7 +116,7 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
                 bail!("cannot access property {} of a non-record {}", property, val)
             }
         },
-        Term::Block(defs, term) => {
+        Term::Block(typings, defs, term) => {
             let mut extended_env = env.clone();
             for (id, def) in defs {
                 let val = eval(def, &extended_env)?;

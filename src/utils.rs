@@ -1,3 +1,6 @@
+use tree_sitter::Node;
+use anyhow::{Result, Ok, bail};
+
 const ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
 
 pub struct Namer {
@@ -24,4 +27,9 @@ impl Namer {
         }
         new_id
     }
+}
+
+pub fn node_text(node: &Node, src: &str) -> Result<String> {
+    let str = node.utf8_text(src.as_bytes())?;
+    return Ok(str.into());
 }

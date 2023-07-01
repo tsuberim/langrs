@@ -217,3 +217,36 @@ Infix application
   )
 )
 
+==================
+Typings
+==================
+(
+  x : a
+  x : List<a>
+  x : [Bar {|a}]
+  x : {name: Str}
+  x
+)
+---
+(source_file
+  (block 
+    (type_def 
+      (id) 
+      (id)
+    )
+    (type_def 
+      (id) 
+      (type_app (tag_id) (id))
+    )
+    (type_def 
+      (id) 
+      (type_union (tag_id) (type_record (id)))
+    )
+    (type_def 
+      (id) 
+      (type_record (id) (type_app (tag_id)))
+    )
+    (id)
+  )
+)
+

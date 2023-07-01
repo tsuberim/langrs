@@ -1,9 +1,10 @@
-use std::{fmt::Display, vec, hash::Hash};
+use std::{fmt::Display, vec};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashmap};
 use anyhow::{Result, Ok, bail};
+use tree_sitter::Node;
 
-use crate::{term::{Term, Lit}, utils::Namer};
+use crate::{term::{Term, Lit}, utils::{Namer, node_text}};
 
 type Id = String;
 
@@ -23,7 +24,7 @@ pub enum Type {
 fn sum_maps(a: HashMap<Id, u32>, b: HashMap<Id, u32> ) -> HashMap<Id, u32> {
     let mut out = a.clone();
     for (id, bn) in b {
-        out.alter(|n| if let Some(n) = n { Some(n + bn) } else {Some(bn)}, id);
+        out = out.alter(|n| if let Some(n) = n { Some(n + bn) } else {Some(bn)}, id);
     }
 
     out
@@ -162,12 +163,17 @@ fn compose(s1: &Subst, s2: &Subst) -> Subst {
 
 fn generalize(namer: &mut Namer,t: Type) -> ForAll {
     let ftv = t.free_type_vars();
-    
     let mut subst = HashMap::new();
     let mut ids = vec![];
     for (id, count) in ftv.into_iter() {
-        let new_id = if count == 1 { "*".to_string() } else {namer.name()};
-        ids.push(new_id.clone());
+        let new_id = if count == 1 { 
+            "*".to_string() 
+        } else {
+            let name = namer.name();
+            ids.push(name.clone());
+            name
+        };
+        
         subst.insert(id.clone() ,Type::Var(new_id));
     }
 
@@ -291,9 +297,9 @@ impl Infer {
         }
     }
 
-    pub fn assert_eq(&mut self, t1: Type, t2: Type) -> Result<()> {
-        let t1 = apply(&self.subst, &t1);
-        let t2 = apply(&self.subst, &t2);
+    pub fn assert_eq(&mut self, t1: &Type, t2: &Type) -> Result<()> {
+        let t1 = apply(&self.subst, t1);
+        let t2 = apply(&self.subst, t2);
         let subst = self.unify(&t1, &t2)?;
         self.subst = compose(&subst, &self.subst);
         Ok(())
@@ -333,7 +339,7 @@ impl Infer {
                 let t_var = Type::Var(self.fresh());
                 args_ts.push(t_var.clone());
                 
-                self.assert_eq(tf, Type::Cons("Fun".to_string(), args_ts))?;
+                self.assert_eq(&tf, &Type::Cons("Fun".to_string(), args_ts))?;
                 Ok(t_var)
             },
             Term::Lam(params, body) => {
@@ -352,7 +358,7 @@ impl Infer {
                 let out = Type::Var(self.fresh());
                 for term in items.into_iter() {
                     let t = self.infer(term, env)?;
-                    self.assert_eq(out.clone(), t)?
+                    self.assert_eq(&out, &t)?
                 }
                 
                 Ok(Type::Cons("List".to_string(), vec!(out)))
@@ -367,17 +373,17 @@ impl Infer {
                     items.insert(tag.clone(), var_type.clone());
 
                     let t = self.infer(result, &env.update(id.clone(), ForAll(vec![], var_type)))?;
-                    self.assert_eq(out.clone(), t)?;
+                    self.assert_eq(&out, &t)?;
                 }
 
                 if let Some(default) = default {
                     let t = self.infer(default, env)?;
-                    self.assert_eq(t, out.clone())?
+                    self.assert_eq(&t, &out)?
                 }
 
                 let t = self.infer(term, env)?;
                 let in_t = Type::Record { items, union: true, rest: if let Some(_) = default { Some(self.fresh()) } else { None } };
-                self.assert_eq(t, in_t)?;
+                self.assert_eq(&t, &in_t)?;
 
                 Ok(out)
             },
@@ -385,15 +391,19 @@ impl Infer {
                 let out = Type::Var(self.fresh());
                 let t = self.infer(term, env)?;
                 let rest = self.fresh();
-                self.assert_eq(t, Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
+                self.assert_eq(&t, &Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
 
                 Ok(out)
             },
-            Term::Block(defs, term) => {
+            Term::Block(typings, defs, term) => {
                 let mut extended_env = env.clone();
 
                 for (id, def) in defs {
-                    let t = self.infer(def, &extended_env)?;
+                    let mut t = self.infer(def, &extended_env)?;
+                    if let Some(declared_type) = typings.get(id) {
+                        self.assert_eq(&t, declared_type)?;
+                    }
+                    t = apply(&self.subst, &t);
                     extended_env = extended_env.update(id.clone(), generalize(&mut self.namer, t));
                 }
 
@@ -413,4 +423,96 @@ pub fn infer(term: &Term, env: &TypeEnv) -> Result<ForAll> {
     let t = infer.infer(term, env)?;
     let forall = generalize(&mut Namer::new(), t);
     Ok(forall)
+}
+
+pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
+    let kind = node.kind();
+
+    let mut cursor = node.walk();
+    if node.is_error() || node.is_missing() {
+        bail!("Error while parsing: {:?}", node_text(&node, src))
+    }
+    for node in node.children(&mut cursor) {
+        if node.is_error() || node.is_missing() {
+            bail!("Error while parsing: {:?}", node_text(&node, src))
+        }
+    }
+
+    match kind {
+        "id" => {
+            let term = Type::Var(node_text(&node, src)?);
+            Ok(term)
+        },
+        "sym" => {
+            let term = Type::Var(node_text(&node, src)?);
+            Ok(term)
+        },
+        "type_record" => {
+            let mut cursor = node.walk();
+            let keys: Vec<String> = node
+                .children_by_field_name("keys", &mut  cursor)
+                .map(|x| node_text(&x, src))
+                .collect::<Result<Vec<String>>>()?;
+
+            let mut cursor = node.walk();
+            let values: Vec<Type> = node
+                .children_by_field_name("types", &mut  cursor)
+                .map(|x| to_type_ast(x, src))
+                .collect::<Result<Vec<Type>>>()?;
+            
+            let items = keys
+                .into_iter()
+                .zip(values.into_iter())
+                .collect();
+
+            let rest = node.child_by_field_name("rest");
+            let rest = if let Some(node) = rest { 
+                Some(node_text(&node, src)?)
+            } else {
+                None
+            };
+
+            Ok(Type::Record { items, union: false, rest })
+        },
+        "type_union" => {
+            let mut cursor = node.walk();
+            let keys: Vec<String> = node
+                .children_by_field_name("keys", &mut  cursor)
+                .map(|x| node_text(&x, src))
+                .collect::<Result<Vec<String>>>()?;
+
+            let mut cursor = node.walk();
+            let values: Vec<Type> = node
+                .children_by_field_name("types", &mut  cursor)
+                .map(|x| to_type_ast(x, src))
+                .collect::<Result<Vec<Type>>>()?;
+            
+            let items = keys
+                .into_iter()
+                .zip(values.into_iter())
+                .collect();
+
+            let rest = node.child_by_field_name("rest");
+            let rest = if let Some(node) = rest { 
+                Some(node_text(&node, src)?)
+            } else {
+                None
+            };
+
+            Ok(Type::Record { items, union: true, rest })
+        },
+        "type_app" => {
+            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in application node"))?;
+            let f = node_text(&f, src)?;
+
+            let args: Vec<Type> = node
+                .children_by_field_name("args", &mut  cursor)
+                .map(|x| to_type_ast(x, src))
+                .collect::<Result<Vec<Type>>>()?;
+
+            let term = Type::Cons(f, args);
+            Ok(term)
+        },
+        _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))
+    }
 }
