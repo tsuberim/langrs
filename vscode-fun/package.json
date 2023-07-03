@@ -8,23 +8,30 @@
 		"type": "git",
 		"url": "https://github.com/Microsoft/vscode-extension-samples"
 	},
-	"publisher": "vscode-samples",
+	"publisher": "tsuberim",
 	"categories": [],
 	"keywords": [],
 	"engines": {
 		"vscode": "^1.75.0"
 	},
-	"activationEvents": [
-		"onLanguage:plaintext"
-	],
+	"activationEvents": ["*"],
 	"main": "./client/out/extension",
-	"contributes": {},
+	"contributes": {
+		"languages": [
+			{
+			  "id": "fun",
+			  "extensions": [".fun"],
+			  "aliases": ["Fun", "fun"],
+			  "filenames": []
+			}
+		  ]
+	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"lint": "eslint ./client/src --ext .ts,.tsx",
+		"postinstall": "cd client && npm install",
 		"test": "sh ./scripts/e2e.sh"
 	},
 	"devDependencies": {
