@@ -169,7 +169,7 @@ impl LanguageServer for Backend {
                                     token_types: LEGEND_TYPE.into(),
                                     token_modifiers: vec![],
                                 },
-                                range: Some(true),
+                                range: Some(false),
                                 full: Some(SemanticTokensFullOptions::Bool(true)),
                             },
                             static_registration_options: StaticRegistrationOptions::default(),
@@ -262,7 +262,7 @@ impl LanguageServer for Backend {
 
                 let token_type = match node.kind() {
                     "num" => 4,
-                    "str_lit" => 5,
+                    "str" => 5,
                     "id" => 1,
                     _ => 0
                 };
