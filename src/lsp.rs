@@ -90,18 +90,13 @@ fn iter_tree(tree: &Tree, cb: &mut impl FnMut(Node) -> ()) {
     let mut cursor = tree.walk();
     loop {
         while cursor.goto_first_child() {}
-
         cb(cursor.node());
-        while cursor.goto_next_sibling() {
-            cb(cursor.node())
-        }
-        cursor.goto_parent();
+        
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
-                return
+                return;
             }
         }
-        cursor.goto_next_sibling();
     }
     
 }
@@ -262,7 +257,7 @@ impl LanguageServer for Backend {
 
                 let token_type = match node.kind() {
                     "num" => 4,
-                    "str" => 5,
+                    "str_lit" => 3,
                     "id" => 1,
                     _ => 0
                 };
