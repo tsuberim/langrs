@@ -2,6 +2,7 @@ use std::{fmt::Display, vec};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashmap};
 use anyhow::{Result, Ok, bail};
+use ropey::Rope;
 use tree_sitter::Node;
 
 use crate::{term::{Term, Lit}, utils::{Namer, node_text}};
@@ -428,7 +429,7 @@ pub fn infer(term: &Term, env: &TypeEnv) -> Result<ForAll> {
     Ok(forall)
 }
 
-pub fn to_type_ast(node: Node, src: &str) -> Result<Type> {
+pub fn to_type_ast(node: Node, src: &Rope) -> Result<Type> {
     let kind = node.kind();
 
     let mut cursor = node.walk();

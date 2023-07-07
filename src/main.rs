@@ -8,14 +8,16 @@ mod lsp;
 use std::{fs, rc::Rc, vec};
 
 use anyhow::{Result, Ok, format_err, bail};
+use cli::repl;
 use im::{HashMap, hashmap};
 
 use lsp::Backend;
+use ropey::Rope;
 use term::Lit;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 use value::apply;
-use crate::{cli::repl, term::to_ast, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv, generalize}};
+use crate::{term::to_ast, value::{eval, Value, ValueEnv}, typing::{infer, ForAll, Type, TypeEnv, generalize}};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use clap::{Parser as ClapParser, command};
@@ -24,16 +26,26 @@ use clap::{Parser as ClapParser, command};
 #[derive(ClapParser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    file: Option<String>
+    file: Option<String>,
+    #[arg(short, long)]
+    stdio: bool
 }
 
 #[tokio::main]
 async fn main() {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
+    let args = Args::parse();
 
-    let (service, socket) = LspService::new(|client| Backend::new(client).unwrap());
-    Server::new(stdin, stdout, socket).serve(service).await;
+    if args.stdio {   
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+
+        let (service, socket) = LspService::new(|client| Backend::new(client).unwrap());
+        Server::new(stdin, stdout, socket).serve(service).await;
+    } else if let Some(file) = args.file {
+        run(&file).unwrap()
+    } else {
+        repl().unwrap()
+    }
 }
 
 fn add(_env: &ValueEnv, args: &Vec<Rc<Value>>) -> Result<Rc<Value>>{
@@ -273,7 +285,8 @@ fn run(file: &String) -> Result<()> {
 
     let tree = parser.parse(&src, None).ok_or(format_err!("could not parse {}", file))?;
 
-    let term = to_ast(tree.root_node(), &src)?;
+    let rope = Rope::from_str(&src);
+    let term = to_ast(tree.root_node(), &rope)?;
 
     let mut t = infer(&term, &type_env)?;
 

@@ -2,6 +2,7 @@ use std::{rc::Rc, fmt::{Display}};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashset, hashmap};
 use anyhow::{Result, Ok, bail};
+use ropey::Rope;
 use tree_sitter::Node;
 
 use crate::{typing::{to_type_ast, ForAll}, utils::node_text};
@@ -116,7 +117,7 @@ impl Display for Term {
     }
 }
 
-pub fn to_ast(node: Node, src: &str) -> Result<Term> {
+pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
     let kind = node.kind();
 
     let mut cursor = node.walk();

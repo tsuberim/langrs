@@ -14,7 +14,7 @@
 	"engines": {
 		"vscode": "^1.75.0"
 	},
-	"activationEvents": ["*"],
+	"activationEvents": [],
 	"main": "./client/out/extension",
 	"contributes": {
 		"languages": [
@@ -22,7 +22,11 @@
 			  "id": "fun",
 			  "extensions": [".fun"],
 			  "aliases": ["Fun", "fun"],
-			  "filenames": []
+			  "filenames": [],
+			  "icon": {
+				"light": "./icons/favicon-32x32.png",
+				"dark": "./icons/favicon-32x32.png"
+			  }
 			}
 		  ]
 	},

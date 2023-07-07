@@ -1,5 +1,6 @@
+use ropey::Rope;
 use tree_sitter::Node;
-use anyhow::{Result, Ok};
+use anyhow::{Result, Ok, format_err};
 
 const ALPHABET: &str = "abcdefghijklmnopqrstuvwxyz";
 
@@ -29,7 +30,9 @@ impl Namer {
     }
 }
 
-pub fn node_text(node: &Node, src: &str) -> Result<String> {
-    let str = node.utf8_text(src.as_bytes())?;
-    return Ok(str.into());
+pub fn node_text(node: &Node, src: &Rope) -> Result<String> {
+    let range = node.byte_range();
+    let slice = src.byte_slice(range);
+    let str = slice.as_str().ok_or(format_err!("could not convert bytes to string"))?;
+    return Ok(str.to_string());
 }

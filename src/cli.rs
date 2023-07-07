@@ -1,6 +1,7 @@
 use std::{io::{self, Write}, process};
 use im::HashMap;
 use anyhow::{Result, Ok};
+use ropey::Rope;
 use rustyline::DefaultEditor;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
@@ -8,13 +9,6 @@ use tree_sitter_fun::language;
 use crate::{term::to_ast, typing::infer, value::eval};
 
 use clap::{Parser as ClapParser, command};
-
-#[derive(ClapParser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    file: Option<String>
-}
-
 
 
 pub fn repl() -> Result<()> {
@@ -28,7 +22,10 @@ pub fn repl() -> Result<()> {
 
         let ast = parser.parse(&src, Option::None).ok_or(anyhow::format_err!("could not parse"))?;
 
-        let term = to_ast(ast.root_node(), src.as_str())?;
+        let src = src.as_str();
+        let src = Rope::from_str(src);
+
+        let term = to_ast(ast.root_node(), &src)?;
 
         let t = infer(&term, &HashMap::new())?;
 
@@ -36,7 +33,7 @@ pub fn repl() -> Result<()> {
 
         println!("{} : {}", val, t);
 
-        rl.add_history_entry(src)?;
+        rl.add_history_entry(src.to_string())?;
 
         Ok(())
     };
