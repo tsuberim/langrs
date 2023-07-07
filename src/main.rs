@@ -5,7 +5,7 @@ mod cli;
 mod utils;
 mod lsp;
 
-use std::{fs, rc::Rc, vec};
+use std::{fs, rc::Rc, vec, hash::Hash};
 
 use anyhow::{Result, Ok, format_err, bail};
 use cli::repl;
@@ -286,9 +286,9 @@ fn run(file: &String) -> Result<()> {
     let tree = parser.parse(&src, None).ok_or(format_err!("could not parse {}", file))?;
 
     let rope = Rope::from_str(&src);
-    let term = to_ast(tree.root_node(), &rope)?;
+    let term = to_ast(tree.root_node(), &rope, &mut HashMap::new())?;
 
-    let mut t = infer(&term, &type_env)?;
+    let mut t = infer(&term, &type_env, &mut HashMap::new())?;
 
     let mut val = eval(&term, &val_env)?;
 

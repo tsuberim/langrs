@@ -1,2 +1,4 @@
-x <- print(`hello`)
-ok(x)
+(
+    f = \x -> 3
+    f(`asd`)
+)

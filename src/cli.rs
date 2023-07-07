@@ -1,4 +1,4 @@
-use std::{io::{self, Write}, process};
+use std::{io::{self, Write}, process, hash::Hash};
 use im::HashMap;
 use anyhow::{Result, Ok};
 use ropey::Rope;
@@ -13,7 +13,8 @@ use clap::{Parser as ClapParser, command};
 
 pub fn repl() -> Result<()> {
     let mut parser = Parser::new();
-    parser.set_language(language())?;
+    let lang = language();
+    parser.set_language(lang)?;
 
     let mut rl = DefaultEditor::new()?;
 
@@ -25,9 +26,9 @@ pub fn repl() -> Result<()> {
         let src = src.as_str();
         let src = Rope::from_str(src);
 
-        let term = to_ast(ast.root_node(), &src)?;
+        let term = to_ast(ast.root_node(), &src, &mut HashMap::new())?;
 
-        let t = infer(&term, &HashMap::new())?;
+        let t = infer(&term, &HashMap::new(), &mut HashMap::new())?;
 
         let val = eval(&term, &HashMap::new())?;
 

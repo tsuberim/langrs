@@ -52,8 +52,9 @@ module.exports = grammar({
       def: $ => seq(field('lhs', choice($.id, $.sym)), '=', field('rhs',$._term)),
       bind: $ => seq(field('lhs', choice($.id, $.sym)), '<-', field('rhs',$._term)),
       type_def: $ => seq(field('lhs', choice($.id, $.sym)), ':', field('rhs',$._type)),
+      _statement: $ => choice($.def, $.bind, $.type_def),
       block: $ => seq('(', 
-        sep(field('statement',choice($.def, $.bind, $.type_def)) ,/\n+/),
+        sep(field('statement',$._statement) , choice(/\n+/, ';')),
         field('term', $._term), 
       ')'),
 

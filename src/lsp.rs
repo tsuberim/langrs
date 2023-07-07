@@ -1,6 +1,4 @@
-use std::future::Future;
-use std::path::Iter;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use dashmap::DashMap;
 
@@ -13,17 +11,23 @@ use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 use tree_sitter_fun::language;
 
 use crate::term::{to_ast, Term};
-use crate::typing::{Type, infer};
+use crate::typing::{infer, Type};
+
 
 const PARSE_CHUNK_SIZE: usize = 128;
 pub struct Doc {
+    pub id: Url,
     pub parser: Parser,
     pub tree: Tree,
     pub rope: Rope,
+    pub terms: HashMap<usize, Arc<Term>>,
+    pub ast: Option<Arc<Term>>,
+
+    pub types: HashMap<usize, Type>,
 }
 
 impl Doc {
-    pub fn new(src: &str) -> Result<Doc> {
+    pub fn new(id: Url, src: &str) -> Result<Doc> {
         let mut parser = Parser::new();
         parser
             .set_language(language())
@@ -39,12 +43,29 @@ impl Doc {
             data: None,
         })?;
         let rope = Rope::from_str(src);
-        let ast = to_ast(tree.root_node(), &rope).ok();
-    
+
+        let mut terms = HashMap::new();
+
+        let ast = to_ast(tree.root_node(), &rope, &mut terms).ok();
+
+        eprintln!("{:?}", ast);
+
+        let mut types = HashMap::new();
+
+        if let Some(term) = &ast {
+            let typ = infer(&term, &HashMap::new(), &mut types).ok();
+            eprintln!("{:?}", types);
+            dbg!(types.clone());
+        }
+
         Ok(Doc { 
+            id,
             parser, 
             tree, 
-            rope, 
+            rope,
+            terms,
+            ast,
+            types,
         })
     }
 
@@ -132,6 +153,15 @@ impl Doc {
             .collect();
         self.tree = new_tree;
 
+        self.terms.clear();
+        let term = to_ast(self.tree.root_node(), &self.rope, &mut self.terms).ok();
+        self.ast = term;
+
+        if let Some(term) = &self.ast {   
+            self.types.clear();
+            let typ = infer(&term, &HashMap::new(), &mut self.types).ok();
+        }
+
         Ok(changed)
     }
 }
@@ -150,12 +180,48 @@ impl Backend {
             docs: DashMap::new(),
         })
     }
+
+    async fn update_diagnostics(&self, doc: &Doc, version: i32) {
+        let mut diagnostics = vec![];
+        scan_tree(&doc.tree, &mut |node| {
+            let range = node.range();
+
+            if node.is_missing() {
+                // let text = node_text(&node, &doc.rope).unwrap();
+                diagnostics.push(Diagnostic{ 
+                    range: Range { 
+                        start: Position { line: range.start_point.row as u32, character: range.start_point.column as u32 }, 
+                        end: Position { line: range.end_point.row as u32, character: range.end_point.column as u32 },
+                    }, 
+                    message: format!("Missing: {}", node.kind()),
+                    ..Default::default()
+                });
+            }   
+
+            if node.is_error() {
+                // let text = node_text(&node, &doc.rope).unwrap();
+                diagnostics.push(Diagnostic{ 
+                    range: Range { 
+                        start: Position { line: range.start_point.row as u32, character: range.start_point.column as u32 }, 
+                        end: Position { line: range.end_point.row as u32, character: range.end_point.column as u32 },
+                    }, 
+                    message: format!("Unexpected: {}", node.to_sexp()),
+                    ..Default::default()
+                });
+            } 
+        });
+        self.client.log_message(MessageType::INFO, "Publishing diagnostics").await;
+        self.client.publish_diagnostics(doc.id.clone(), diagnostics, Some(version)).await;
+        
+    }
+
 }
 
-fn iter_tree(tree: &Tree, cb: &mut impl FnMut(Node) -> ()) {
+fn scan_tree(tree: &Tree, cb: &mut impl FnMut(Node) -> ()) {
     let mut cursor = tree.walk();
     loop {
-        while cursor.goto_first_child() {}
+        cb(cursor.node());
+        while cursor.goto_first_child() {cb(cursor.node());}
         cb(cursor.node());
 
         while !cursor.goto_next_sibling() {
@@ -240,16 +306,21 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let doc_id = params.text_document.uri;
         let src = params.text_document.text;
-        let doc = Doc::new(src.as_str()).unwrap();
-        self.docs.insert(doc_id, doc);
+        let doc = Doc::new(doc_id, src.as_str()).unwrap();
+        self.update_diagnostics(&doc, params.text_document.version).await;
+        self.docs.insert(doc.id.clone(), doc);
     }
 
+
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        self.client.log_message(MessageType::INFO, "did_change").await;
         let doc_id = params.text_document.uri;
         if let Some(mut doc) = self.docs.get_mut(&doc_id) {
             for change in params.content_changes {
                 doc.edit(change).unwrap();
             }
+            self.client.log_message(MessageType::INFO, "diagnosing").await;
+            self.update_diagnostics(&doc, params.text_document.version).await;
         } else {
             self.client
                 .log_message(
@@ -275,7 +346,10 @@ impl LanguageServer for Backend {
 
             let mut pre_line = 0;
             let mut pre_start = 0;
-            iter_tree(&doc.tree, &mut |node| {
+            scan_tree(&doc.tree, &mut |node| {
+                if !node.is_named() || node.child_count() > 0 {
+                    return
+                }
                 let range = node.range();
 
                 // SemanticTokenType::FUNCTION,
@@ -339,29 +413,33 @@ impl LanguageServer for Backend {
             let pos = params.text_document_position_params.position;
 
             let offset_bytes = doc.rope.line_to_byte(pos.line as usize) + pos.character as usize;
+            
+            let mut term = None;
+            scan_tree(&doc.tree, &mut |node| {
+                if node.byte_range().contains(&offset_bytes) {
+                    if let Some(t) = doc.terms.get(&node.id()) {
+                        term = Some(t)
+                    }
+                }
+            });
 
-            let root_node = doc.tree.root_node();
-            let node = doc.tree.root_node_with_offset(
-                offset_bytes,
-                Point {
-                    row: pos.line as usize,
-                    column: pos.character as usize,
-                },
-            );
-
-            Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!(
-                        "root: {} {:?} | node: {} {:?}",
-                        root_node.id(),
-                        root_node.range(),
-                        node.id(),
-                        node.range()
-                    ),
-                }),
-                range: None,
-            }))
+            if let Some(term) = term {
+                if let Some(typ) = doc.types.get(&term.id()) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: format!(
+                                "{} : {}",
+                                term, 
+                                typ
+                            ),
+                        }),
+                        range: None,
+                    }))
+                }
+            }
+             
+            Ok(None)
         } else {
             self.client
                 .log_message(MessageType::ERROR, format!("could not find doc {}", doc_id))

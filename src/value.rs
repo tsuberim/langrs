@@ -1,4 +1,4 @@
-use std::{rc::Rc, fmt::Display};
+use std::{rc::Rc, fmt::Display, sync::Arc};
 use colored::Colorize;
 use im::HashMap;
 use anyhow::{Result, Ok, bail};
@@ -12,7 +12,7 @@ pub enum Value {
     Tag(Id, Rc<Value>),
     Record(HashMap<String, Rc<Value>>),
     List(Vec<Rc<Value>>),
-    Closure(ValueEnv, Vec<Id>, Rc<Term>),
+    Closure(ValueEnv, Vec<Id>, Arc<Term>),
     Builtin(&'static str, Box<dyn Fn (&ValueEnv, &Vec<Rc<Value>>) -> Result<Rc<Value>>>),
     Task(Rc<dyn Fn () -> Result<Rc<Value>>>),
     
@@ -50,8 +50,8 @@ pub type ValueEnv = HashMap<Id, Rc<Value>>;
 
 pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
     match term {
-        Term::Lit(lit) => Ok(Rc::new(Value::Lit(lit.clone()))),
-        Term::Var(id) => {
+        Term::Lit(id, lit) => Ok(Rc::new(Value::Lit(lit.clone()))),
+        Term::Var(_,id) => {
             
             if let Some(val) = env.get(id) {
                 Ok(Rc::clone(val))
@@ -59,27 +59,27 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
                 Err(anyhow::format_err!("unbound variable {}", id))
             }
         },
-        Term::Tag(id, payload) => {
+        Term::Tag(_, id, payload) => {
             let payload = eval(&payload, env)?;
             Ok(Rc::new(Value::Tag(id.clone(), payload)))
         }
-        Term::Record(data) => {
+        Term::Record(_, data) => {
             let data = data.into_iter().map(|(k, v)| -> Result<(String, Rc<Value>)> {
                 let v = eval(v, env)?;
                 Ok((k.clone(), v))
             }).collect::<Result<HashMap<String, Rc<Value>>>>()?;
             Ok(Rc::new(Value::Record(data)))
         },
-        Term::List(items) => {
+        Term::List(_, items) => {
             let vals = items.into_iter().map(|x| eval(x, env)).collect::<Result<Vec<Rc<Value>>>>()?;
             Ok(Rc::new(Value::List(vals)))
         },
-        Term::App(f, args) => {
+        Term::App(_, f, args) => {
             let f = eval(f, env)?;
             let args = args.iter().map(|term| eval(term, env)).collect::<Result<Vec<Rc<Value>>>>()?;
             apply(env, f, &args)
         },
-        Term::Lam(params, body) => {
+        Term::Lam(_, params, body) => {
             let fv = body.free_vars();
 
             let env: ValueEnv = env
@@ -90,7 +90,7 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
 
             Ok(Rc::new(Value::Closure(env.clone(), params.clone(), body.clone())))
         },
-        Term::Match(term, cases, default) => {
+        Term::Match(_, term, cases, default) => {
             let val = eval(term, env)?;
             if let Value::Tag(id, payload) = val.as_ref() {
                 if let Some((var, body)) = cases.get(id) {
@@ -104,7 +104,7 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
                 bail!("matching on non tag value {}", val)
             }
         },
-        Term::Access(term, property) => {
+        Term::Access(_, term, property) => {
             let val = eval(term, env)?;
             if let Value::Record(items) = val.as_ref() {
                 if let Some(out) = items.get(property) {
@@ -116,7 +116,7 @@ pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
                 bail!("cannot access property {} of a non-record {}", property, val)
             }
         },
-        Term::Block(_, defs, term) => {
+        Term::Block(_, _, defs, term) => {
             let mut extended_env = env.clone();
             for (id, def) in defs {
                 let val = eval(def, &extended_env)?;

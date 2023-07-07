@@ -1,11 +1,11 @@
-use std::{rc::Rc, fmt::{Display}};
+use std::{rc::Rc, fmt::{Display}, sync::Arc};
 use colored::Colorize;
 use im::{HashMap, HashSet, hashset, hashmap};
 use anyhow::{Result, Ok, bail};
 use ropey::Rope;
 use tree_sitter::Node;
 
-use crate::{typing::{to_type_ast, ForAll}, utils::node_text};
+use crate::{typing::{to_type_ast, ForAll}, utils::node_text, ret};
 
 type Id = String;
 
@@ -25,30 +25,46 @@ impl Display for Lit {
 }
 
 #[derive(Debug, Clone)]
-struct Case(Id, Id, Rc<Term>);
+struct Case(Id, Id, Arc<Term>);
 
 #[derive(Debug, Clone)]
 pub enum Term {
-    Lit(Lit),
-    Var(Id),
-    Tag(Id, Rc<Term>),
-    Record(HashMap<Id, Term>),
-    Match(Rc<Term>, HashMap<Id, (Id, Term)>, Option<Rc<Term>>),
-    List(Vec<Term>),
-    Access(Rc<Term>, Id),
-    App(Rc<Term>, Vec<Term>),
-    Block(HashMap<Id, ForAll>, Vec<(Id, Term)>, Rc<Term>), // like a let
-    Lam(Vec<Id>, Rc<Term>)
+    Lit(usize, Lit),
+    Var(usize, Id),
+    Tag(usize, Id, Arc<Term>),
+    Record(usize, HashMap<Id, Arc<Term>>),
+    Match(usize, Arc<Term>, HashMap<Id, (Id, Arc<Term>)>, Option<Arc<Term>>),
+    List(usize, Vec<Arc<Term>>),
+    Access(usize, Arc<Term>, Id),
+    App(usize, Arc<Term>, Vec<Arc<Term>>),
+    Block(usize, HashMap<Id, ForAll>, Vec<(Id, Arc<Term>)>, Arc<Term>), // like a let
+    Lam(usize, Vec<Id>, Arc<Term>)
 }
 
+
 impl Term {
+    pub fn id(&self) -> usize {
+        match self {
+            Term::Lit(id, _) => *id,
+            Term::Var(id, _) => *id,
+            Term::Tag(id, _, _) => *id,
+            Term::Record(id, _) => *id,
+            Term::Match(id, _, _, _) => *id,
+            Term::List(id, _) => *id,
+            Term::Access(id, _, _) => *id,
+            Term::App(id, _, _) => *id,
+            Term::Block(id, _, _, _) => *id,
+            Term::Lam(id, _, _) => *id,
+        }
+    }
+
     pub fn free_vars(&self) -> HashSet<Id> {
         match self {
-            Term::Lit(_) => hashset![],
-            Term::Var(v) => hashset![v.clone()],
-            Term::Tag(_, payload) => payload.free_vars(),
-            Term::Record(items) => items.into_iter().map(|(_k, v)| v.free_vars()).fold(hashset![], HashSet::union),
-            Term::Match(term, cases, default) => {
+            Term::Lit(id, _) => hashset![],
+            Term::Var(id, v) => hashset![v.clone()],
+            Term::Tag(id, _, payload) => payload.free_vars(),
+            Term::Record(id, items) => items.into_iter().map(|(_k, v)| v.free_vars()).fold(hashset![], HashSet::union),
+            Term::Match(id, term, cases, default) => {
                 let mut fv: HashSet<String> = term.free_vars();
                 for (_, (id, result)) in cases {
                     fv = fv.union(result.free_vars().without(id))
@@ -58,15 +74,15 @@ impl Term {
                 }
                 fv
             },
-            Term::List(items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
-            Term::Access(x, _prop) => x.free_vars(),
-            Term::App(f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
-            Term::Block(_, defs, term) => {
+            Term::List(id, items) => items.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union),
+            Term::Access(id, x, _prop) => x.free_vars(),
+            Term::App(id, f, args) => f.free_vars().union(args.into_iter().map(|x| x.free_vars()).fold(hashset![], HashSet::union)),
+            Term::Block(id, _, defs, term) => {
                 defs
                     .iter()
                     .fold(term.free_vars(), |acc, (id, term)| acc.without(id).union(term.free_vars()))
             },
-            Term::Lam(params, body) => {
+            Term::Lam(id, params, body) => {
                 let mut fv = body.free_vars();
                 for param in params {
                     fv = fv.without(param)
@@ -80,36 +96,36 @@ impl Term {
 impl Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Term::Lit(lit) => lit.fmt(f),
-            Term::Var(name) => write!(f, "{}", name.green()),
-            Term::Tag(name, payload) => {
-                if let Term::Record(data) = payload.as_ref() {
+            Term::Lit(id, lit) => lit.fmt(f),
+            Term::Var(id, name) => write!(f, "{}", name.green()),
+            Term::Tag(id, name, payload) => {
+                if let Term::Record(id, data) = payload.as_ref() {
                     if data.len() == 0 {
                         return write!(f, "{}", name.blue())
                     }
                 }
                 write!(f, "{}({})", name.blue(), payload)
             },
-            Term::Record(data) => {
+            Term::Record(id, data) => {
                 let pairs: Vec<String> = data.iter().map(|(k ,v)| format!("{}: {}", k, v)).collect();
                 write!(f, "{{{}}}", pairs.join(", "))
             },
-            Term::List(items) => {
+            Term::List(id, items) => {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Term::Match(term, cases, default) => {
+            Term::Match(id, term, cases, default) => {
                 let cases: Vec<String> = cases.iter().map(|(tag, (id, result))| format!("{} {} -> {}", tag, id, result)).collect();
                 let default = if let Some(term) = default { format!(" else {}", term) } else { "".to_string() };
                 write!(f, "when {} is {}{}", term, cases.join("; "), default)
             },
-            Term::App(function, args) => {
+            Term::App(id, function, args) => {
                 let args: Vec<String> = args.iter().map(|arg| format!("{}", arg)).collect();
                 write!(f, "({})({})", function, args.join(", "))
             },
-            Term::Lam(params, body) => write!(f, "\\{} -> {}", params.join(", "), body),
-            Term::Access(term, property) => write!(f, "{}.{}", term, property),
-            Term::Block(_, defs, term) => {
+            Term::Lam(id, params, body) => write!(f, "\\{} -> {}", params.join(", "), body),
+            Term::Access(id, term, property) => write!(f, "{}.{}", term, property),
+            Term::Block(id, _, defs, term) => {
                 let defs: Vec<String> = defs.iter().map(|(k, v)| format!("{} = {}", k, v)).collect();
                 write!(f, "({}\n{})", defs.join("\n"), term)
             },
@@ -117,7 +133,8 @@ impl Display for Term {
     }
 }
 
-pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
+pub fn to_ast(node: Node, src: &Rope, cache: &mut HashMap<usize, Arc<Term>>) -> Result<Arc<Term>> {
+    let id = node.id();
     let kind = node.kind();
 
     let mut cursor = node.walk();
@@ -130,62 +147,66 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
         }
     }
 
-    match kind {
+    let term = match kind {
         "source_file" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in source_file node"))?;
-            to_ast(term, src)
+            to_ast(term, src, cache)
         },
         "parens" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in parens node"))?;
-            to_ast(term, src)
+            to_ast(term, src,cache)
         },
         "str_lit" => {
             let text = node_text(&node, src)?;
             let lit = Lit::Str(text);
-            let term = Term::Lit(lit);
-            Ok(term)
+            let term = Term::Lit(id, lit);
+            Ok(Arc::new(term))
         },
         "str" => {
             let mut cursor = node.walk();
-            let terms: Vec<Term> = node
+            let terms = node
                 .named_children(&mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
+                .map(|x| to_ast(x, src, cache))
+                .collect::<Result<Vec<Arc<Term>>>>()?;
+
+            if terms.len() == 1 {
+                return Ok(Arc::clone(terms.get(0).unwrap()))
+            }
 
             let t = terms
                 .into_iter()
                 .fold(
-                    Term::Lit(Lit::Str("".to_string())), 
+                    Arc::new(Term::Lit(id, Lit::Str("".to_string()))), 
                     |acc, term| 
-                        Term::App(
-                            Rc::new(Term::Var("++".to_string())), 
+                        Arc::new(Term::App(id, 
+                            Arc::new(Term::Var(id, "++".to_string())), 
                             vec![acc, term]
-                        )
+                        ))
                 );
             Ok(t)
         }
         "num" => {
             let lit = Lit::Num(node_text(&node, src)?.parse()?);
-            let term = Term::Lit(lit);
-            Ok(term)
+            let term = Term::Lit(id, lit);
+            Ok(Arc::new(term))
         },
         "id" => {
-            let term = Term::Var(node_text(&node, src)?);
-            Ok(term)
+            let term = Term::Var(id, node_text(&node, src)?);
+            Ok(Arc::new(term))
         },
         "sym" => {
-            let term = Term::Var(node_text(&node, src)?);
-            Ok(term)
+            let term = Term::Var(id, node_text(&node, src)?);
+            Ok(Arc::new(term))
         },
         "tag" => {
             let payload = node.child_by_field_name("payload");
             
-            let payload = if let Some(node) = payload { to_ast(node, src)? } else {Term::Record(HashMap::new())}; 
+            let payload = if let Some(node) = payload { to_ast(node, src, cache)? } else {Arc::new(Term::Record(id, HashMap::new()))}; 
 
             let name = node.child_by_field_name("name").ok_or(anyhow::format_err!("could not find field 'name' in tag node"))?;
             let name = node_text(&name, src)?;
-            let term = Term::Tag(name, Rc::new(payload));
-            Ok(term)
+            let term = Term::Tag(id, name, payload);
+            Ok(Arc::new(term))
         },
         "record" => {
             let mut cursor = node.walk();
@@ -195,21 +216,21 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                 .collect::<Result<Vec<String>>>()?;
 
             let mut cursor = node.walk();
-            let values: Vec<Term> = node
+            let values = node
                 .children_by_field_name("values", &mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
+                .map(|x| to_ast(x, src, cache))
+                .collect::<Result<Vec<Arc<Term>>>>()?;
             
-            Ok(Term::Record(
+            Ok(Arc::new(Term::Record(id, 
                 keys
                     .into_iter()
                     .zip(values.into_iter())
                     .collect()
-            ))
+            )))
         },
         "match" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in match node"))?;
-            let term = to_ast(term, src)?;
+            let term = to_ast(term, src, cache)?;
 
             let mut cursor = node.walk();
             let tags: Vec<String> = node
@@ -224,13 +245,13 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                 .collect::<Result<Vec<String>>>()?;
 
             let mut cursor = node.walk();
-            let results: Vec<Term> = node
+            let results = node
                 .children_by_field_name("case_result", &mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
+                .map(|x| to_ast(x, src, cache))
+                .collect::<Result<Vec<Arc<Term>>>>()?;
 
 
-            let mut cases: HashMap<Id, (Id, Term)> = HashMap::new();
+            let mut cases: HashMap<Id, (Id, Arc<Term>)> = HashMap::new();
             for (tag, (id, term)) in tags.into_iter().zip(ids.into_iter().zip(results.into_iter())) {
                 cases.insert(tag, (id, term));
             }
@@ -239,44 +260,44 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
             let mut e = None;
             let else_term = node.child_by_field_name("else");
             if let Some(node) = else_term {
-                let term = to_ast(node, src)?;
-                e = Some(Rc::new(term))
+                let term = to_ast(node, src, cache)?;
+                e = Some(term)
             }
 
-            Ok(Term::Match(Rc::new(term), cases, e))
+            Ok(Arc::new(Term::Match(id, term, cases, e)))
         }
         "list" => {
             let mut cursor = node.walk();
-            let items: Vec<Term> = node
+            let items = node
                 .children_by_field_name("items", &mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
-            Ok(Term::List(items))
+                .map(|x| to_ast(x, src, cache))
+                .collect::<Result<Vec<Arc<Term>>>>()?;
+            Ok(Arc::new(Term::List(id, items)))
         },
         "app" => {
             let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in application node"))?;
-            let f = to_ast(f, src)?;
+            let f = to_ast(f, src, cache)?;
 
-            let args: Vec<Term> = node
+            let args = node
                 .children_by_field_name("args", &mut  cursor)
-                .map(|x| to_ast(x, src))
-                .collect::<Result<Vec<Term>>>()?;
+                .map(|x| to_ast(x, src, cache))
+                .collect::<Result<Vec<Arc<Term>>>>()?;
 
-            let term = Term::App(Rc::new(f), args);
-            Ok(term)
+            let term = Term::App(id, f, args);
+            Ok(Arc::new(term))
         },
         "infix_app" => {
             let lhs = node.child_by_field_name("lhs").ok_or(anyhow::format_err!("could not find field 'lhs' in infix application node"))?;
-            let lhs = to_ast(lhs, src)?;
+            let lhs = to_ast(lhs, src, cache)?;
 
             let rhs = node.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in infix application node"))?;
-            let rhs = to_ast(rhs, src)?;
+            let rhs = to_ast(rhs, src, cache)?;
 
             let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in infix application node"))?;
             let f = node_text(&f, src)?;
 
-            let term = Term::App(Rc::new(Term::Var(f)), vec![lhs, rhs]);
-            Ok(term)
+            let term = Term::App(id, Arc::new(Term::Var(id, f)), vec![lhs, rhs]);
+            Ok(Arc::new(term))
         },
         "lam" => {
             let params: Vec<Id> = node
@@ -285,31 +306,31 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                 .collect::<Result<Vec<Id>>>()?;
 
             let body = node.child_by_field_name("body").ok_or(anyhow::format_err!("could not find field 'body' in lambda node"))?;
-            let body = to_ast(body, src)?;
+            let body = to_ast(body, src, cache)?;
 
-            let term = Term::Lam(params, Rc::new(body));
-            Ok(term)
+            let term = Term::Lam(id, params, body);
+            Ok(Arc::new(term))
         },
         "access" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
-            let term = to_ast(term, src)?;
+            let term = to_ast(term, src, cache)?;
 
             let property = node.child_by_field_name("property").ok_or(anyhow::format_err!("could not find field 'property' in access node"))?;
             let property = node_text(&property, src)?;
 
-            let term = Term::Access(Rc::new(term), property);
-            Ok(term)
+            let term = Term::Access(id, term, property);
+            Ok(Arc::new(term))
         },
         "curied_access" => {
             let property = node.child_by_field_name("property").ok_or(anyhow::format_err!("could not find field 'property' in access node"))?;
             let property = node_text(&property, src)?;
 
-            let term = Term::Lam(vec!["x".to_string()], Rc::new(Term::Access(Rc::new(Term::Var("x".to_string())), property)));
-            Ok(term)
+            let term = Term::Lam(id, vec!["x".to_string()], Arc::new(Term::Access(id, Arc::new(Term::Var(id, "x".to_string())), property)));
+            Ok(Arc::new(term))
         },
         "block" => {
             let term = node.child_by_field_name("term").ok_or(anyhow::format_err!("could not find field 'term' in access node"))?;
-            let mut term = to_ast(term, src)?;
+            let mut term = to_ast(term, src, cache)?;
 
             let mut cursor = node.walk();
             let stmts: Vec<Node> = node.children_by_field_name("statement", &mut cursor).collect();
@@ -324,7 +345,7 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                         let lhs = node_text(&lhs, src)?;
                         
                         let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
-                        let rhs = to_ast(rhs, src)?;
+                        let rhs = to_ast(rhs, src, cache)?;
 
                         defs.push((lhs, rhs));
                     },
@@ -340,7 +361,7 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                     },
                     "bind" => {
                         if defs.len() > 0 || type_defs.len() > 0 {
-                            term = Term::Block(type_defs, defs.clone(), Rc::new(term));
+                            term = Arc::new(Term::Block(id, type_defs, defs.clone(), term));
                             defs = vec![];
                             type_defs = hashmap!{};
                         }
@@ -349,20 +370,25 @@ pub fn to_ast(node: Node, src: &Rope) -> Result<Term> {
                         let lhs = if let Some(lhs) = lhs {node_text(&lhs, src)?} else {"_".to_string()} ;
                         
                         let rhs = stmt.child_by_field_name("rhs").ok_or(anyhow::format_err!("could not find field 'rhs' in statement node"))?;
-                        let rhs = to_ast(rhs, src)?;
+                        let rhs = to_ast(rhs, src, cache)?;
 
-                        term = Term::App(Rc::new(Term::Var("$".to_string())), vec![rhs, Term::Lam(vec![lhs], Rc::new(term))]);
+                        term = Arc::new(Term::App(id, Arc::new(Term::Var(id, "$".to_string())), vec![rhs, Arc::new(Term::Lam(id, vec![lhs], term))]));
                     },
                     _ => bail!("invalid statement kind {}", stmt.kind())
                 }
             }
 
             if defs.len() > 0 || type_defs.len() > 0 {
-                term = Term::Block(type_defs.clone(), defs.clone(), Rc::new(term));
+                term = Arc::new(Term::Block(id, type_defs.clone(), defs.clone(), term));
             }
             
             Ok(term)
         },
         _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))
-    }
+    }?;
+
+    
+    cache.insert(node.id(), Arc::clone(&term));
+
+    Ok(term)
 }
