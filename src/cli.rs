@@ -1,4 +1,4 @@
-use std::{io::{self, Write}, process, hash::Hash};
+use std::{io::{self, Write}, process};
 use im::HashMap;
 use anyhow::{Result, Ok};
 use ropey::Rope;
@@ -6,9 +6,7 @@ use rustyline::DefaultEditor;
 use tree_sitter::Parser;
 use tree_sitter_fun::language;
 
-use crate::{term::to_ast, typing::infer, value::eval};
-
-use clap::{Parser as ClapParser, command};
+use crate::{term::to_ast, typing::infer, value::eval, builtins::{get_context, get_type_env, get_value_env}};
 
 
 pub fn repl() -> Result<()> {
@@ -26,11 +24,15 @@ pub fn repl() -> Result<()> {
         let src = src.as_str();
         let src = Rope::from_str(src);
 
-        let term = to_ast(ast.root_node(), &src, &mut HashMap::new())?;
+        let context = get_context();
+        let type_env = get_type_env(&context);
+        let val_env = get_value_env(&context);
 
-        let t = infer(&term, &HashMap::new(), &mut HashMap::new())?;
+        let term = to_ast(ast.root_node(), &src, &mut HashMap::new());
 
-        let val = eval(&term, &HashMap::new())?;
+        let (t, _errs) = infer(&term, &type_env, &mut HashMap::new());
+
+        let val = eval(&term, &val_env)?;
 
         println!("{} : {}", val, t);
 

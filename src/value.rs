@@ -38,7 +38,7 @@ impl Display for Value {
                 let pairs: Vec<String> = items.iter().map(|item| format!("{}", item)).collect();
                 write!(f, "[{}]", pairs.join(", "))
             }
-            Value::Closure(_, params, body) => write!(f, "<closure>"),
+            Value::Closure(_, _params, _body) => write!(f, "<closure>"),
             Value::Builtin(name, _) => write!(f, "<builtin {}>", name),
             Value::Task(_) => write!(f, "<task>"),
         }
@@ -50,7 +50,7 @@ pub type ValueEnv = HashMap<Id, Rc<Value>>;
 
 pub fn eval(term: &Term, env: &ValueEnv) -> Result<Rc<Value>> {
     match term {
-        Term::Lit(id, lit) => Ok(Rc::new(Value::Lit(lit.clone()))),
+        Term::Lit(_, lit) => Ok(Rc::new(Value::Lit(lit.clone()))),
         Term::Var(_,id) => {
             
             if let Some(val) = env.get(id) {

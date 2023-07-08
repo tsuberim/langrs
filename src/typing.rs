@@ -1,11 +1,14 @@
-use std::{fmt::Display, vec, hash::Hash};
+use anyhow::{bail, Ok, Result};
 use colored::Colorize;
-use im::{HashMap, HashSet, hashmap};
-use anyhow::{Result, Ok, bail};
+use im::{hashmap, HashMap, HashSet};
 use ropey::Rope;
+use std::{fmt::Display, vec};
 use tree_sitter::Node;
 
-use crate::{term::{Term, Lit}, utils::{Namer, node_text}};
+use crate::{
+    term::{Lit, Term},
+    utils::{node_text, Namer},
+};
 
 type Id = String;
 
@@ -22,10 +25,19 @@ pub enum Type {
     Cons(String, Vec<Type>),
 }
 
-fn sum_maps(a: HashMap<Id, u32>, b: HashMap<Id, u32> ) -> HashMap<Id, u32> {
+fn sum_maps(a: HashMap<Id, u32>, b: HashMap<Id, u32>) -> HashMap<Id, u32> {
     let mut out = a.clone();
     for (id, bn) in b {
-        out = out.alter(|n| if let Some(n) = n { Some(n + bn) } else {Some(bn)}, id);
+        out = out.alter(
+            |n| {
+                if let Some(n) = n {
+                    Some(n + bn)
+                } else {
+                    Some(bn)
+                }
+            },
+            id,
+        );
     }
 
     out
@@ -35,7 +47,11 @@ impl Type {
     pub fn free_type_vars(&self) -> HashMap<Id, u32> {
         match self {
             Type::Var(id) => hashmap! {id.clone() => 1},
-            Type::Record { items, union: _, rest } => {
+            Type::Record {
+                items,
+                union: _,
+                rest,
+            } => {
                 let mut init = HashMap::new();
                 if let Some(id) = rest {
                     init.insert(id.clone(), 1);
@@ -47,8 +63,11 @@ impl Type {
                     .map(|t| t.free_type_vars())
                     .fold(init, sum_maps);
                 ftv
-            },
-            Type::Cons(_, args) => args.iter().map(|x| x.free_type_vars()).fold(HashMap::new(), sum_maps),
+            }
+            Type::Cons(_, args) => args
+                .iter()
+                .map(|x| x.free_type_vars())
+                .fold(HashMap::new(), sum_maps),
         }
     }
 }
@@ -60,38 +79,54 @@ impl Display for Type {
             Type::Record { items, union, rest } => {
                 fn is_empty_record(t: &Type) -> bool {
                     match t {
-                        Type::Record { items, union, rest } if !union && items.len() == 0 && rest.is_none() => true,
-                        _ => false
+                        Type::Record { items, union, rest }
+                            if !union && items.len() == 0 && rest.is_none() =>
+                        {
+                            true
+                        }
+                        _ => false,
                     }
                 }
 
-                let items: Vec<String> = items.into_iter().map(|(k, t)| {
-                    if *union && is_empty_record(t) {
-                        format!("{}", k.blue())
-                    } else if *union {
-                        format!("{} {}", k.blue(), t)
-                    } else {
-                        format!("{}: {}", k, t)
-                    }
-                }).collect();
-                let rest = if let Some(id) = rest { format!(" | {}",id.green()) } else { "".to_string() };
-                let inner = format!("{}{}",items.join(", "), rest);
-                if *union && items.len() == 1 && rest == ""{
-                    write!(f, "{}", inner) 
-                } else if *union { 
-                    write!(f, "[{}]", inner) 
+                let items: Vec<String> = items
+                    .into_iter()
+                    .map(|(k, t)| {
+                        if *union && is_empty_record(t) {
+                            format!("{}", k.blue())
+                        } else if *union {
+                            format!("{} {}", k.blue(), t)
+                        } else {
+                            format!("{}: {}", k, t)
+                        }
+                    })
+                    .collect();
+                let rest = if let Some(id) = rest {
+                    format!(" | {}", id.green())
+                } else {
+                    "".to_string()
+                };
+                let inner = format!("{}{}", items.join(", "), rest);
+                if *union && items.len() == 1 && rest == "" {
+                    write!(f, "{}", inner)
+                } else if *union {
+                    write!(f, "[{}]", inner)
                 } else {
                     write!(f, "{{{}}}", inner)
                 }
-            },
+            }
             Type::Cons(name, args) => {
-                if args.len() == 0 { 
-                    write!(f, "{}", name.blue()) 
+                if name == "Fun" {
+                    let mut args = args.clone();
+                    let return_t = args.pop().unwrap();
+                    let args: Vec<String> = args.iter().map(|x| format!("{}", x)).collect();
+                    write!(f, "\\{} -> {}", args.join(", "), return_t)
+                } else if args.len() == 0 {
+                    write!(f, "{}", name.blue())
                 } else {
                     let args: Vec<String> = args.iter().map(|x| format!("{}", x)).collect();
                     write!(f, "{}<{}>", name.blue(), args.join(", "))
                 }
-            },
+            }
         }
     }
 }
@@ -102,7 +137,6 @@ pub struct ForAll(pub Vec<Id>, pub Type);
 impl Display for ForAll {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut namer = Namer::new();
-
 
         let ForAll(_, t) = self;
 
@@ -115,9 +149,13 @@ impl Display for ForAll {
                 subst.insert(id.clone(), Type::Var(namer.name()));
             }
         }
-        let ids: Vec<String> = ftv.keys().cloned().filter(|k| *k == "*".to_string()).collect();
+        let ids: Vec<String> = ftv
+            .keys()
+            .cloned()
+            .filter(|k| *k == "*".to_string())
+            .collect();
         let t = apply(&subst, t);
-        
+
         if ids.len() > 1 {
             write!(f, "∀{}. {}", ids.join(" ").green(), t)
         } else {
@@ -129,6 +167,13 @@ impl Display for ForAll {
 struct Infer {
     subst: Subst,
     namer: Namer,
+    errors: Vec<TypeError>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeError {
+    pub node_id: usize,
+    pub message: String,
 }
 
 type Subst = HashMap<Id, Type>;
@@ -141,32 +186,43 @@ fn apply(subst: &Subst, t: &Type) -> Type {
             } else {
                 t.clone()
             }
-        },
+        }
         Type::Record { items, union, rest } => {
-            let mut items: HashMap<String, Type> = items.into_iter().map(|(k, t)| (k.clone(), apply(subst, t))).collect();
+            let mut items: HashMap<String, Type> = items
+                .into_iter()
+                .map(|(k, t)| (k.clone(), apply(subst, t)))
+                .collect();
 
             let mut rest = rest.clone();
             if let Some(id) = &rest {
                 if let Some(t) = subst.get(id) {
                     match t {
-                        Type::Record { items: other_items, union: other_union, rest: other_rest } if union == other_union => {
+                        Type::Record {
+                            items: other_items,
+                            union: other_union,
+                            rest: other_rest,
+                        } if union == other_union => {
                             rest = other_rest.clone();
                             items = other_items.clone().union(items);
-                        },
+                        }
                         Type::Var(v) => {
                             rest = Some(v.clone());
                         }
-                        _ => panic!("cannot substitute {} into rest variable {} in {}", t, id, t)
+                        _ => panic!("cannot substitute {} into rest variable {} in {}", t, id, t),
                     }
                 }
             }
 
-            Type::Record { items, union: *union, rest }
+            Type::Record {
+                items,
+                union: *union,
+                rest,
+            }
         }
         Type::Cons(name, args) => {
             let args = args.iter().map(|x| apply(subst, x)).collect();
             return Type::Cons(name.clone(), args);
-        },
+        }
     }
 }
 
@@ -199,9 +255,10 @@ fn bind(id: &Id, t: &Type) -> Result<Subst> {
 
 impl Infer {
     pub fn new(namer: Namer) -> Infer {
-        Infer { 
+        Infer {
             namer,
-            subst: HashMap::new() 
+            subst: HashMap::new(),
+            errors: vec![],
         }
     }
 
@@ -209,26 +266,35 @@ impl Infer {
         return self.namer.name();
     }
 
-    fn instantiate(&mut self, forall: &ForAll) -> Result<Type> {
+    fn instantiate(&mut self, forall: &ForAll) -> Type {
         let ForAll(ids, t) = forall;
         let mut subst = HashMap::new();
         for id in ids {
             subst.insert(id.clone(), Type::Var(self.fresh()));
         }
 
-        Ok(apply(&subst, t))
+        apply(&subst, t)
     }
-    
-    fn lookup(&mut self, id: &Id, env: &TypeEnv) -> Result<Type> {
-        let forall = env.get(id).ok_or(anyhow::format_err!("unbound variable {}", id))?;
-        self.instantiate(&forall)
+
+    fn lookup(&mut self, node_id: usize, id: &Id, env: &TypeEnv) -> Type {
+        if let Some(forall) = env.get(id) {
+            self.instantiate(forall)
+        } else {
+            self.emit_error(TypeError {
+                node_id,
+                message: format!("unbound variable {}", id),
+            });
+            Type::Var(self.fresh())
+        }
     }
 
     fn unify(&mut self, t1: &Type, t2: &Type) -> Result<Subst> {
         match (t1, t2) {
             (Type::Var(id), t) => bind(id, t),
             (t, Type::Var(id)) => bind(id, t),
-            (Type::Cons(f1, args1), Type::Cons(f2, args2)) if f1 == f2 && args1.len() == args2.len() => {
+            (Type::Cons(f1, args1), Type::Cons(f2, args2))
+                if f1 == f2 && args1.len() == args2.len() =>
+            {
                 let mut subst = HashMap::new();
                 for (t1, t2) in args1.iter().zip(args2.iter()) {
                     let t1 = &apply(&subst, t1);
@@ -237,10 +303,18 @@ impl Infer {
                     subst = compose(&s, &subst);
                 }
                 Ok(subst)
-            },
+            }
             (
-                Type::Record { items: items1, union: union1, rest: rest1 }, 
-                Type::Record { items: items2, union: union2, rest: rest2 }  
+                Type::Record {
+                    items: items1,
+                    union: union1,
+                    rest: rest1,
+                },
+                Type::Record {
+                    items: items2,
+                    union: union2,
+                    rest: rest2,
+                },
             ) if union1 == union2 => {
                 let union = union1;
 
@@ -259,92 +333,125 @@ impl Infer {
                 let rest = match (rest1, rest2) {
                     (Some(r1), Some(r2)) => {
                         let r = self.fresh();
-                        
+
                         let s = self.unify(&Type::Var(r.clone()), &Type::Var(r1.clone()))?;
                         subst = compose(&s, &subst);
                         let s = self.unify(&Type::Var(r.clone()), &Type::Var(r2.clone()))?;
                         subst = compose(&s, &subst);
 
                         Some(r)
-                    },
-                    _ => None
+                    }
+                    _ => None,
                 };
-        
-                
-                let t1_minus_t2: HashMap<String, Type> = items1.clone().into_iter().filter(|(k, _)| !items2.contains_key(k)).collect();
-                let t2_minus_t1: HashMap<String, Type> = items2.clone().into_iter().filter(|(k, _)| !items1.contains_key(k)).collect();
-                
+
+                let t1_minus_t2: HashMap<String, Type> = items1
+                    .clone()
+                    .into_iter()
+                    .filter(|(k, _)| !items2.contains_key(k))
+                    .collect();
+                let t2_minus_t1: HashMap<String, Type> = items2
+                    .clone()
+                    .into_iter()
+                    .filter(|(k, _)| !items1.contains_key(k))
+                    .collect();
+
                 let assignable_to_t1 = t2_minus_t1.len() == 0 || rest1.is_some();
                 let assignable_to_t2 = t1_minus_t2.len() == 0 || rest2.is_some();
 
-                
-
                 if rest.is_some() || (assignable_to_t1 && assignable_to_t2) {
                     if let Some(r1) = rest1 {
-                        let s = self.unify(&Type::Var(r1.clone()), &Type::Record { items: t2_minus_t1, union: *union, rest: rest.clone() })?;
+                        let s = self.unify(
+                            &Type::Var(r1.clone()),
+                            &Type::Record {
+                                items: t2_minus_t1,
+                                union: *union,
+                                rest: rest.clone(),
+                            },
+                        )?;
                         subst = compose(&s, &subst);
                     }
 
                     if let Some(r2) = rest2 {
-                        let s = self.unify(&Type::Var(r2.clone()), &Type::Record { items: t1_minus_t2, union: *union, rest: rest.clone() })?;
+                        let s = self.unify(
+                            &Type::Var(r2.clone()),
+                            &Type::Record {
+                                items: t1_minus_t2,
+                                union: *union,
+                                rest: rest.clone(),
+                            },
+                        )?;
                         subst = compose(&s, &subst);
                     }
-                
                 } else {
                     bail!("cannot unify records {} ~ {}", t1, t2)
                 }
 
                 Ok(subst)
             }
-            _ => bail!("could not unify {} ~ {} ", t1, t2)
+            _ => bail!("could not unify {} ~ {} ", t1, t2),
         }
     }
 
-    pub fn assert_eq(&mut self, t1: &Type, t2: &Type) -> Result<()> {
-        let t1 = apply(&self.subst, t1);
-        let t2 = apply(&self.subst, t2);
-        let subst = self.unify(&t1, &t2)?;
-        self.subst = compose(&subst, &self.subst);
-        Ok(())
+    pub fn assert_eq(&mut self, node_id: usize, wanted: &Type, inferred: &Type) {
+        let t1 = apply(&self.subst, wanted);
+        let t2 = apply(&self.subst, inferred);
+        let subst_result = self.unify(&t1, &t2);
+        match subst_result {
+            Result::Ok(subst) => {
+                self.subst = compose(&subst, &self.subst);
+            }
+            Result::Err(err) => {
+                self.emit_error(TypeError {
+                    node_id,
+                    message: err.to_string(),
+                });
+            }
+        }
     }
 
-    pub fn infer(&mut self, term: &Term, env: &TypeEnv, cache: &mut HashMap<usize, Type>) -> Result<Type> {
-        let t = match term {
+    pub fn infer(&mut self, term: &Term, env: &TypeEnv, cache: &mut HashMap<usize, Type>) -> Type {
+        let t: Type = match term {
             Term::Lit(_, lit) => match lit {
-                Lit::Str(_) => Ok(Type::Cons("Str".to_string(), vec![])),
-                Lit::Num(_) => Ok(Type::Cons("Num".to_string(), vec![])),
+                Lit::Str(_) => Type::Cons("Str".to_string(), vec![]),
+                Lit::Num(_) => Type::Cons("Num".to_string(), vec![]),
             },
-            Term::Var(_, id) => {
-                self.lookup(id, env)
-            },
+            Term::Var(node_id, id) => self.lookup(*node_id, id, env),
             Term::Tag(_, id, payload) => {
-                let t = self.infer(payload, env, cache)?;
+                let t = self.infer(payload, env, cache);
                 let mut items = HashMap::new();
                 items.insert(id.clone(), t);
-                Ok(Type::Record { items, union: true, rest: Some(self.fresh()) })
-            },
+                Type::Record {
+                    items,
+                    union: true,
+                    rest: Some(self.fresh()),
+                }
+            }
             Term::Record(_, data) => {
                 let mut items = HashMap::new();
                 for (k, e) in data {
-                    let t = self.infer(e, env, cache)?;
+                    let t = self.infer(e, env, cache);
                     items.insert(k.clone(), t);
-                } 
-                Ok(Type::Record { items, union: false, rest: None })
-            },
+                }
+                Type::Record {
+                    items,
+                    union: false,
+                    rest: None,
+                }
+            }
             Term::App(_, f, args) => {
-                let tf = self.infer(f, env, cache)?;
+                let tf = self.infer(f, env, cache);
 
                 let mut args_ts = vec![];
                 for arg in args {
-                    let t = self.infer(arg, env, cache)?;
+                    let t = self.infer(arg, env, cache);
                     args_ts.push(t);
                 }
                 let t_var = Type::Var(self.fresh());
                 args_ts.push(t_var.clone());
-                
-                self.assert_eq(&tf, &Type::Cons("Fun".to_string(), args_ts))?;
-                Ok(t_var)
-            },
+
+                self.assert_eq(f.id(), &Type::Cons("Fun".to_string(), args_ts), &tf);
+                t_var
+            }
             Term::Lam(_, params, body) => {
                 let mut extended_env = env.clone();
                 let mut params_ts = vec![];
@@ -353,19 +460,19 @@ impl Infer {
                     params_ts.push(t_var.clone());
                     extended_env.insert(param.clone(), ForAll(vec![], t_var.clone()));
                 }
-                let t_body = self.infer(body, &extended_env, cache)?;
+                let t_body = self.infer(body, &extended_env, cache);
                 params_ts.push(t_body);
-                Ok(Type::Cons("Fun".to_string(), params_ts))
-            },
+                Type::Cons("Fun".to_string(), params_ts)
+            }
             Term::List(_, items) => {
                 let out = Type::Var(self.fresh());
                 for term in items.into_iter() {
-                    let t = self.infer(term, env, cache)?;
-                    self.assert_eq(&out, &t)?
+                    let t = self.infer(term, env, cache);
+                    self.assert_eq(term.id(), &out, &t)
                 }
-                
-                Ok(Type::Cons("List".to_string(), vec!(out)))
-            },
+
+                Type::Cons("List".to_string(), vec![out])
+            }
             Term::Match(_, term, cases, default) => {
                 let mut items = HashMap::new();
                 let out = Type::Var(self.fresh());
@@ -375,169 +482,191 @@ impl Infer {
 
                     items.insert(tag.clone(), var_type.clone());
 
-                    let t = self.infer(result, &env.update(id.clone(), ForAll(vec![], var_type)), cache)?;
-                    self.assert_eq(&out, &t)?;
+                    let t = self.infer(
+                        result,
+                        &env.update(id.clone(), ForAll(vec![], var_type)),
+                        cache,
+                    );
+                    self.assert_eq(result.id(), &out, &t);
                 }
 
                 if let Some(default) = default {
-                    let t = self.infer(default, env, cache)?;
-                    self.assert_eq(&t, &out)?
+                    let t = self.infer(default, env, cache);
+                    self.assert_eq(default.id(), &out, &t)
                 }
 
-                let t = self.infer(term, env, cache)?;
-                let in_t = Type::Record { items, union: true, rest: if let Some(_) = default { Some(self.fresh()) } else { None } };
-                self.assert_eq(&t, &in_t)?;
+                let t = self.infer(term, env, cache);
+                let in_t = Type::Record {
+                    items,
+                    union: true,
+                    rest: if let Some(_) = default {
+                        Some(self.fresh())
+                    } else {
+                        None
+                    },
+                };
+                self.assert_eq(term.id(), &in_t, &t);
 
-                Ok(out)
-            },
-            Term::Access(_, term, property) => {
+                out
+            }
+            Term::Access(id, term, property) => {
                 let out = Type::Var(self.fresh());
-                let t = self.infer(term, env, cache)?;
+                let t = self.infer(term, env, cache);
                 let rest = self.fresh();
-                self.assert_eq(&t, &Type::Record { items: hashmap!{property.clone() => out.clone()}, union: false, rest: Some(rest) })?;
+                self.assert_eq(
+                    *id,
+                    &Type::Record {
+                        items: hashmap! {property.clone() => out.clone()},
+                        union: false,
+                        rest: Some(rest),
+                    },
+                    &t,
+                );
 
-                Ok(out)
-            },
+                out
+            }
             Term::Block(_, typings, defs, term) => {
                 let mut extended_env = env.clone();
 
                 for (id, def) in defs {
-                    let t = self.infer(def, &extended_env, cache)?;
+                    let t = self.infer(def, &extended_env, cache);
                     if let Some(declared_type) = typings.get(id) {
-                        let declared_type = self.instantiate(declared_type)?;
-                        self.assert_eq(&t, &declared_type)?;
+                        let declared_type = self.instantiate(declared_type);
+                        self.assert_eq(def.id(), &declared_type, &t);
                     }
                     let t = apply(&self.subst, &t);
                     extended_env = extended_env.update(id.clone(), ForAll(vec![], t));
                 }
 
-                
-                let t = self.infer(term, &extended_env, cache)?;
-                Ok(t)
-            },
-        }?;
-        
+                let t = self.infer(term, &extended_env, cache);
+                t
+            }
+        };
+
         let t = apply(&self.subst, &t);
-        eprintln!("infer {:?} {:?}", term.id(), t.clone());
         cache.insert(term.id(), t.clone());
-        Ok(t)
+        t
+    }
+
+    fn emit_error(&mut self, err: TypeError) {
+        self.errors.push(err)
     }
 }
 
-pub fn infer(term: &Term, env: &TypeEnv, cache: &mut HashMap<usize, Type>) -> Result<ForAll> {
+pub fn infer(
+    term: &Term,
+    env: &TypeEnv,
+    cache: &mut HashMap<usize, Type>,
+) -> (ForAll, Vec<TypeError>) {
     let mut infer = Infer::new(Namer::new());
-    let t = infer.infer(term, env, cache)?;
+    let t = infer.infer(term, env, cache);
+    // for (k, t) in cache.iter_mut() {
+    //     *t = apply(&infer.subst, t);
+    // }
     let forall = generalize(t);
-    Ok(forall)
+    (forall, infer.errors)
 }
 
-pub fn to_type_ast(node: Node, src: &Rope) -> Result<Type> {
+pub fn to_type_ast(node: Node, src: &Rope) -> Type {
     let kind = node.kind();
-
     let mut cursor = node.walk();
-    if node.is_error() || node.is_missing() {
-        bail!("Error while parsing: {:?}", node_text(&node, src))
-    }
-    for node in node.children(&mut cursor) {
-        if node.is_error() || node.is_missing() {
-            bail!("Error while parsing: {:?}", node_text(&node, src))
-        }
-    }
 
     match kind {
         "id" => {
-            let term = Type::Var(node_text(&node, src)?);
-            Ok(term)
-        },
+            let term = Type::Var(node_text(&node, src));
+            term
+        }
         "sym" => {
-            let term = Type::Var(node_text(&node, src)?);
-            Ok(term)
-        },
+            let term = Type::Var(node_text(&node, src));
+            term
+        }
         "type_record" => {
             let mut cursor = node.walk();
             let keys: Vec<String> = node
-                .children_by_field_name("keys", &mut  cursor)
+                .children_by_field_name("keys", &mut cursor)
                 .map(|x| node_text(&x, src))
-                .collect::<Result<Vec<String>>>()?;
+                .collect();
 
             let mut cursor = node.walk();
             let values: Vec<Type> = node
-                .children_by_field_name("types", &mut  cursor)
+                .children_by_field_name("types", &mut cursor)
                 .map(|x| to_type_ast(x, src))
-                .collect::<Result<Vec<Type>>>()?;
-            
-            let items = keys
-                .into_iter()
-                .zip(values.into_iter())
                 .collect();
 
+            let items = keys.into_iter().zip(values.into_iter()).collect();
+
             let rest = node.child_by_field_name("rest");
-            let rest = if let Some(node) = rest { 
-                Some(node_text(&node, src)?)
+            let rest = if let Some(node) = rest {
+                Some(node_text(&node, src))
             } else {
                 None
             };
 
-            Ok(Type::Record { items, union: false, rest })
-        },
+            Type::Record {
+                items,
+                union: false,
+                rest,
+            }
+        }
         "type_union" => {
             let mut cursor = node.walk();
             let keys: Vec<String> = node
-                .children_by_field_name("keys", &mut  cursor)
+                .children_by_field_name("keys", &mut cursor)
                 .map(|x| node_text(&x, src))
-                .collect::<Result<Vec<String>>>()?;
+                .collect();
 
             let mut cursor = node.walk();
             let values: Vec<Type> = node
-                .children_by_field_name("types", &mut  cursor)
+                .children_by_field_name("types", &mut cursor)
                 .map(|x| to_type_ast(x, src))
-                .collect::<Result<Vec<Type>>>()?;
-            
-            let items = keys
-                .into_iter()
-                .zip(values.into_iter())
                 .collect();
 
+            let items = keys.into_iter().zip(values.into_iter()).collect();
+
             let rest = node.child_by_field_name("rest");
-            let rest = if let Some(node) = rest { 
-                Some(node_text(&node, src)?)
+            let rest = if let Some(node) = rest {
+                Some(node_text(&node, src))
             } else {
                 None
             };
 
-            Ok(Type::Record { items, union: true, rest })
-        },
+            Type::Record {
+                items,
+                union: true,
+                rest,
+            }
+        }
         "type_app" => {
-            let f = node.child_by_field_name("f").ok_or(anyhow::format_err!("could not find field 'f' in type_app node"))?;
-            let f = node_text(&f, src)?;
+            let f = node.child_by_field_name("f").unwrap();
+            let f = node_text(&f, src);
 
             let args: Vec<Type> = node
-                .children_by_field_name("args", &mut  cursor)
+                .children_by_field_name("args", &mut cursor)
                 .map(|x| to_type_ast(x, src))
-                .collect::<Result<Vec<Type>>>()?;
+                .collect();
 
             let term = Type::Cons(f, args);
-            Ok(term)
-        },
+            term
+        }
         "type_lam" => {
             let mut args: Vec<Type> = node
-                .children_by_field_name("args", &mut  cursor)
+                .children_by_field_name("args", &mut cursor)
                 .map(|x| to_type_ast(x, src))
-                .collect::<Result<Vec<Type>>>()?;
-            
-            let f = node.child_by_field_name("result").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
-            let f = to_type_ast(f, src)?;
+                .collect();
+
+            let f = node.child_by_field_name("result").unwrap();
+            let f = to_type_ast(f, src);
 
             args.push(f);
 
             let term = Type::Cons("Fun".to_string(), args);
-            Ok(term)
-        },
+            term
+        }
         "type_parens" => {
-            let t = node.child_by_field_name("type").ok_or(anyhow::format_err!("could not find field 'f' in type_lam node"))?;
-            let t = to_type_ast(t, src)?;
-            Ok(t)
-        },
-        _ => Err(anyhow::format_err!("Unknown ast type '{}'", kind))
+            let t = node.child_by_field_name("type").unwrap();
+            let t = to_type_ast(t, src);
+            t
+        }
+        _ => panic!("Unknown ast type '{}'", kind),
     }
 }

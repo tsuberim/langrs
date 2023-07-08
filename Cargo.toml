@@ -11,6 +11,7 @@ clap = { version = "4.3.9", features = ["derive"] }
 colored = "2.0.0"
 dashmap = "5.4.0"
 im = "15.1.0"
+indexmap = "2.0.0"
 reqwest = { version = "0.11.18", features = ["blocking"] }
 ropey = "1.6.0"
 rustyline = "12.0.0"
@@ -20,4 +21,8 @@ tokio = { version = "1.29.1", features = ["macros", "fs", "rt", "full"] }
 tower-lsp = "0.19.0"
 tree-sitter = "0.20.10"
 tree-sitter-fun = { path = "./tree-sitter-fun" }
+url = "2.4.0"
+wain = "0.1.6"
+wain-ast = "0.2.1"
+wain-exec = "0.3.0"
 

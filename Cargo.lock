@@ -280,7 +280,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "907076dfda823b0b36d2a1bb5f90c96660a5bbcd7729e10727f07858f22c4edc"
 dependencies = [
  "cfg-if",
- "hashbrown",
+ "hashbrown 0.12.3",
  "lock_api",
  "once_cell",
  "parking_lot_core",
@@ -300,6 +300,12 @@ name = "endian-type"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
+
+[[package]]
+name = "equivalent"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88bffebc5d80432c9b140ee17875ff173a8ab62faad5b257da912bd2f6c1c0a1"
 
 [[package]]
 name = "errno"
@@ -391,6 +397,7 @@ dependencies = [
  "colored",
  "dashmap",
  "im",
+ "indexmap 2.0.0",
  "reqwest",
  "ropey",
  "rustyline",
@@ -400,6 +407,10 @@ dependencies = [
  "tower-lsp",
  "tree-sitter",
  "tree-sitter-fun",
+ "url",
+ "wain",
+ "wain-ast",
+ "wain-exec",
 ]
 
 [[package]]
@@ -497,7 +508,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http",
- "indexmap",
+ "indexmap 1.9.3",
  "slab",
  "tokio",
  "tokio-util",
@@ -509,6 +520,12 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
 
 [[package]]
 name = "heck"
@@ -642,7 +659,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg",
- "hashbrown",
+ "hashbrown 0.12.3",
+]
+
+[[package]]
+name = "indexmap"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5477fe2230a79769d8dc68e0eabf5437907c0457a5614a9e8dddb67f65eb65d"
+dependencies = [
+ "equivalent",
+ "hashbrown 0.14.0",
 ]
 
 [[package]]
@@ -1597,6 +1624,61 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "wain"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1694916f6b0b3e0344f258c223e2612c5c1e36b8c5b827b5bfb2b969f3e0a5a6"
+dependencies = [
+ "wain-ast",
+ "wain-exec",
+ "wain-syntax-binary",
+ "wain-syntax-text",
+ "wain-validate",
+]
+
+[[package]]
+name = "wain-ast"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29c197088a0f58b4c343db5750ead2d199bc03a649d13c75bc5f7fdc92f3774c"
+
+[[package]]
+name = "wain-exec"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dab0a4c8e9a3a4bcd6aaceb4154d4f99b94c86229e162ddbd592eef244aacd30"
+dependencies = [
+ "wain-ast",
+]
+
+[[package]]
+name = "wain-syntax-binary"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56faca41578b66517017d77aeac0d839a641a9d208185561991207e9063e5ffc"
+dependencies = [
+ "wain-ast",
+]
+
+[[package]]
+name = "wain-syntax-text"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f378087cdaf91df8f6c88abd3ad9c009d54300a569099e739ec500778408a456"
+dependencies = [
+ "wain-ast",
+]
+
+[[package]]
+name = "wain-validate"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87254761ab45cf60d935deee8ff0e1d604156d0b1fcb086eb40c8667543aeaab"
+dependencies = [
+ "wain-ast",
+]
 
 [[package]]
 name = "want"
