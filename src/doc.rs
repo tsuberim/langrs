@@ -1,3 +1,4 @@
+use colored::Colorize;
 use indexmap::IndexMap;
 use ropey::Rope;
 use tower_lsp::{
@@ -61,6 +62,14 @@ pub fn to_lsp_range(r: &tree_sitter::Range) -> Range {
             character: r.end_point.column as u32,
         },
     }
+}
+
+pub fn format_point(p: Position) -> String {
+    format!("{}:{}", p.line, p.character + 1)
+}
+
+pub fn format_range(range: Range) -> String {
+    format!("[{}-{}]", format_point(range.start), format_point(range.end))
 }
 
 impl Doc {
@@ -250,5 +259,20 @@ impl Doc {
 
     pub fn module(&self) -> &Module {
         &self.module
+    }
+
+    pub fn get_text(&self, range: Range) -> &str {
+        let start = self.get_byte_offset(range.start);
+        let end = self.get_byte_offset(range.end);
+        self.src.byte_slice(start..end).as_str().unwrap()
+    }
+
+    pub fn format_err(&self, node_id: usize, msg: &str) -> String {
+        let node = self.get_node(node_id).unwrap();
+        let text = self.get_text(node.range);
+        let range_text = format_range(node.range);
+        let first_line = format!("{}: ..{}..", range_text, text);
+        let out = format!("{}\n{} - {}", first_line, " ".repeat(range_text.len() + 4) + &"~".repeat(text.len()), msg);
+        out
     }
 }

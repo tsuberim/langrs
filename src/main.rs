@@ -1,29 +1,29 @@
-mod typing;
-mod term;
-mod value;
-mod cli;
-mod utils;
-mod lsp;
 mod builtins;
-mod module;
 mod doc;
+mod lsp;
+mod module;
+mod term;
+mod typing;
+mod utils;
+mod value;
 
-use std::{fs, vec};
+use std::{fs, vec, process, io::{self, Write}};
 
-use anyhow::{Result, Ok, format_err};
-use cli::repl;
-use im::{HashMap};
-
+use anyhow::{Ok, Result};
+use colored::Colorize;
 use lsp::Backend;
-use ropey::Rope;
+use rustyline::DefaultEditor;
+use url::Url;
 
-use tree_sitter::Parser;
-use tree_sitter_fun::language;
+use crate::{
+    builtins::{get_context, get_value_env},
+    doc::Doc,
+    typing::{ForAll, Type},
+    value::{eval, Value},
+};
 
-use crate::{term::to_ast, value::{eval, Value}, typing::{infer, ForAll, Type}, builtins::{get_context, get_value_env, get_type_env}};
-
+use clap::{command, Parser as ClapParser};
 use tower_lsp::{LspService, Server};
-use clap::{Parser as ClapParser, command};
 
 /// Simple program to greet a person
 #[derive(ClapParser, Debug)]
@@ -31,57 +31,99 @@ use clap::{Parser as ClapParser, command};
 struct Args {
     file: Option<String>,
     #[arg(short, long)]
-    stdio: bool
+    stdio: bool,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
-    if args.stdio {   
+    if args.stdio {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
 
         let (service, socket) = LspService::new(|client| Backend::new(client).unwrap());
-        Server::new(stdin, stdout, socket).concurrency_level(1).serve(service).await;
+        Server::new(stdin, stdout, socket)
+            .concurrency_level(1)
+            .serve(service)
+            .await;
     } else if let Some(file) = args.file {
-        run(&file).unwrap()
+        run(&file)
     } else {
         repl().unwrap()
     }
 }
 
+fn print_value(url: Url, src: &str) -> Result<()> {
+    let src = format!("({})", src);
 
-fn run(file: &String) -> Result<()> {
-    let mut parser = Parser::new();
-    parser.set_language(language())?;
+    let doc = Doc::new(url, &src).unwrap();
 
-    let src = fs::read_to_string(file)?;
-    let src = format!("({})", src); 
+    let type_errors = doc.module().type_errors();
+    if type_errors.len() > 0 {
+        for err in type_errors {
+            println!("{}", doc.format_err(err.node_id, err.message.as_str()).red())
+        }
+
+        return Err(anyhow::format_err!("TypeErrors"))
+    }
 
     let context = get_context();
-    let type_env = get_type_env(&context);
     let val_env = get_value_env(&context);
 
-    let tree = parser.parse(&src, None).ok_or(format_err!("could not parse {}", file))?;
-
-    let rope = Rope::from_str(&src);
-    let term = to_ast(tree.root_node(), &rope, &mut HashMap::new());
-
-    let (mut t, _errs) = infer(&term, &type_env, &mut HashMap::new());
+    let term = doc.module().root_term();
+    let mut t = doc.module().root_type().clone();
 
     let mut val = eval(&term, &val_env)?;
 
     match (val.as_ref(), t.clone()) {
-        (Value::Task(f), ForAll(vars, Type::Cons(cons, args))) if cons == "Task" => {
+        (Value::Task(f), ForAll(_, Type::Cons(cons, args))) if cons == "Task" => {
             val = f()?;
             let ty = args.get(0).unwrap();
-            t = ForAll(vec![],ty.clone());
+            t = ForAll(vec![], ty.clone());
         }
         _ => {}
     }
-    
+
     println!("{} : {}", val, t);
 
     Ok(())
+}
+
+fn run(file: &String) {
+    let url = Url::parse(format!("file://{}", file).as_str()).unwrap();
+    let src = fs::read_to_string(file).unwrap();
+
+    let result = print_value(url, src.as_str());
+
+    match result {
+        Result::Ok(_) => {},
+        Result::Err(err) => {
+            println!("{}", err)
+        },
+    }
+}
+
+fn repl() -> Result<()> {
+    let mut rl = DefaultEditor::new()?;
+
+    let mut step = || -> Result<()> {
+        let src = rl.readline("fun> ")?;
+        let url = Url::parse("repl://inline").unwrap();
+        print_value(url, src.as_str())?;
+        rl.add_history_entry(src.to_string())?;
+
+        Ok(())
+    };
+
+    loop {
+        if let Err(err) = step() {
+            println!("Error: {}", err);
+            io::stdout().flush()?;
+
+            if err.to_string().contains("Interrupted") {
+                process::exit(0)
+            }
+        }
+    }
 }
