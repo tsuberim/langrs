@@ -25,4 +25,7 @@ url = "2.4.0"
 wain = "0.1.6"
 wain-ast = "0.2.1"
 wain-exec = "0.3.0"
+wasmer = "4.0.0"
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm15-0"] }
+
 

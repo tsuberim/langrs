@@ -7,7 +7,7 @@ use tree_sitter::{Tree};
 use crate::{
     builtins::{get_context, get_type_env},
     term::{to_ast, Term},
-    typing::{infer, Type, TypeError, ForAll},
+    typing::{infer, Type, TypeError, ForAll}, doc::ParseError,
 };
 
 pub struct Module {
@@ -19,18 +19,18 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn new(tree: &Tree, src: &Rope) -> Module {
+    pub fn new(tree: &Tree, src: &Rope) -> Result<Module, ParseError> {
         let mut terms = HashMap::new();
         let mut types = HashMap::new();
 
-        let term = to_ast(tree.root_node(), src, &mut terms);
+        let term = to_ast(tree.root_node(), src, &mut terms)?;
 
         let context = get_context();
         let type_env = get_type_env(&context);
 
         let (typ, type_errors) = infer(&term, &type_env, &mut types);
 
-        Module { term, typ, terms, types, type_errors }
+        Ok(Module { term, typ, terms, types, type_errors })
     }
 
     pub fn type_errors(&self) -> &Vec<TypeError> {

@@ -1,9 +1,8 @@
 use dashmap::DashMap;
 
-use tower_lsp::jsonrpc::{Result};
+use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
-
 
 use crate::doc::Doc;
 use crate::typing::Type;
@@ -34,13 +33,15 @@ impl Backend {
             }
         }
 
-        for err in doc.module().type_errors() {
-            if let Some(node) = doc.get_node(err.node_id) {
-                diagnostics.push(Diagnostic {
-                    range: node.range,
-                    message: err.message.clone(),
-                    ..Default::default()
-                })
+        if let Some(module) = doc.module() {
+            for err in module.type_errors() {
+                if let Some(node) = doc.get_node(err.node_id) {
+                    diagnostics.push(Diagnostic {
+                        range: node.range,
+                        message: err.message.clone(),
+                        ..Default::default()
+                    })
+                }
             }
         }
 
@@ -163,46 +164,59 @@ impl LanguageServer for Backend {
 
             for leaf in doc.leaves() {
                 if let Some(kind) = &leaf.kind {
-                    let range = leaf.range;
-                    // SemanticTokenType::FUNCTION,
-                    // SemanticTokenType::VARIABLE,
-                    // SemanticTokenType::STRING,
-                    // SemanticTokenType::COMMENT,
-                    // SemanticTokenType::NUMBER,
-                    // SemanticTokenType::KEYWORD,
-                    // SemanticTokenType::OPERATOR,
-                    // SemanticTokenType::PARAMETER,
-                    // SemanticTokenType::TYPE,
+                    if let Some(module) = doc.module() {
+                        
 
-                    let token_type = match kind.as_str() {
-                        "num" => 4,
-                        "str_lit" => 2,
-                        "id" => 1,
-                        "comment" => 3,
-                        "sym" => 6,
-                        "tag_id" => 8,
-                        _ => 0,
-                    };
+                        let range = leaf.range;
+                        // SemanticTokenType::FUNCTION,
+                        // SemanticTokenType::VARIABLE,
+                        // SemanticTokenType::STRING,
+                        // SemanticTokenType::COMMENT,
+                        // SemanticTokenType::NUMBER,
+                        // SemanticTokenType::KEYWORD,
+                        // SemanticTokenType::OPERATOR,
+                        // SemanticTokenType::PARAMETER,
+                        // SemanticTokenType::TYPE,
 
-                    let line = range.start.line;
-                    let start = range.start.character;
-                    let length = leaf.length;
+                        let mut token_type = match kind.as_str() {
+                            "num" => 4,
+                            "str_lit" => 2,
+                            "id" => 1,
+                            "comment" => 3,
+                            "sym" => 6,
+                            "tag_id" => 8,
+                            _ => 0,
+                        };
 
-                    let delta_line = line - pre_line;
-                    let delta_start = if delta_line == 0 {
-                        start - pre_start
-                    } else {
-                        start
-                    };
-                    tokens.push(SemanticToken {
-                        delta_line,
-                        delta_start,
-                        length: length,
-                        token_type: token_type,
-                        token_modifiers_bitset: 0,
-                    });
-                    pre_line = line;
-                    pre_start = start;
+                        let t = module.get_type(leaf.id);
+                        if let Some(t) = t {
+                            if let Type::Cons(name, _) = t {
+                                if name == "Fun" {
+                                    token_type = 0; // function
+                                }
+                            }
+                        }
+
+                        let line = range.start.line;
+                        let start = range.start.character;
+                        let length = leaf.length;
+
+                        let delta_line = line - pre_line;
+                        let delta_start = if delta_line == 0 {
+                            start - pre_start
+                        } else {
+                            start
+                        };
+                        tokens.push(SemanticToken {
+                            delta_line,
+                            delta_start,
+                            length: length,
+                            token_type: token_type,
+                            token_modifiers_bitset: 0,
+                        });
+                        pre_line = line;
+                        pre_start = start;
+                    }
                 }
             }
 
@@ -219,18 +233,20 @@ impl LanguageServer for Backend {
         let doc_id = params.text_document_position_params.text_document.uri;
 
         if let Some(doc) = self.docs.get(&doc_id) {
-            let pos = params.text_document_position_params.position;
-            if let Some(node) = doc.find_named_node(pos) {
-                if let Some(typ) = doc.module().get_type(node.id) {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Scalar(MarkedString::LanguageString(
-                            LanguageString {
-                                language: "fun".to_string(),
-                                value: format!("{}", typ),
-                            },
-                        )),
-                        range: Some(node.range),
-                    }));
+            if let Some(module) = doc.module() {
+                let pos = params.text_document_position_params.position;
+                if let Some(node) = doc.find_named_node(pos) {
+                    if let Some(typ) = module.get_type(node.id) {
+                        return Ok(Some(Hover {
+                            contents: HoverContents::Scalar(MarkedString::LanguageString(
+                                LanguageString {
+                                    language: "fun".to_string(),
+                                    value: format!("{}", typ),
+                                },
+                            )),
+                            range: Some(node.range),
+                        }));
+                    }
                 }
             }
 
@@ -248,34 +264,36 @@ impl LanguageServer for Backend {
 
         if let Some(doc) = self.docs.get(&doc_id) {
             let pos = params.text_document_position.position;
-            if let Some(node) = doc.find_named_node(pos) {
-                if let Some(typ) = doc.module().get_type(node.id) {
-                    if let Type::Record { items, union, rest } = typ {
-                        if !union {
-                            return Ok(Some(CompletionResponse::Array(
-                                items
-                                    .keys()
-                                    .into_iter()
-                                    .map(|k| CompletionItem {
-                                        label: k.clone(),
-                                        ..Default::default()
-                                    })
-                                    .collect(),
-                            )));
+            if let Some(module) = doc.module() {
+                if let Some(node) = doc.find_named_node(pos) {
+                    if let Some(typ) = module.get_type(node.id) {
+                        if let Type::Record { items, union, rest } = typ {
+                            if !union {
+                                return Ok(Some(CompletionResponse::Array(
+                                    items
+                                        .keys()
+                                        .into_iter()
+                                        .map(|k| CompletionItem {
+                                            label: k.clone(),
+                                            ..Default::default()
+                                        })
+                                        .collect(),
+                                )));
+                            }
                         }
-                    }
 
-                    if let Type::Cons(name, args) = typ {
-                        if *name == "Fun".to_string() {
-                            return Ok(Some(CompletionResponse::Array(vec![CompletionItem {
-                                label: (0..args.len() - 1)
-                                    .into_iter()
-                                    .map(|_| "".to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(", ")
-                                    + ")",
-                                ..Default::default()
-                            }])));
+                        if let Type::Cons(name, args) = typ {
+                            if *name == "Fun".to_string() {
+                                return Ok(Some(CompletionResponse::Array(vec![CompletionItem {
+                                    label: (0..args.len() - 1)
+                                        .into_iter()
+                                        .map(|_| "".to_string())
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                        + ")",
+                                    ..Default::default()
+                                }])));
+                            }
                         }
                     }
                 }

@@ -1,3 +1,5 @@
+use std::{fs::File, os::fd::AsRawFd, sync::Arc};
+
 use colored::Colorize;
 use indexmap::IndexMap;
 use ropey::Rope;
@@ -47,7 +49,7 @@ pub struct Doc {
     src: Rope,
     tree: Tree,
     parse_errors: Vec<ParseError>,
-    module: Module,
+    module: Result<Arc<Module>, ParseError>,
     nodes: IndexMap<usize, SyntaxNode>
 }
 
@@ -86,9 +88,10 @@ impl Doc {
             message: "could not parse source".into(), 
             data: None
         })?;
+
         let src = Rope::from_str(src);
 
-        let module = Module::new(&tree, &src);
+        let module = Module::new(&tree, &src).map(|x| Arc::new(x));
 
         let mut doc = Doc {
             url,
@@ -121,8 +124,12 @@ impl Doc {
             character: end_col,
         } = end;
 
-        let byte_start = self.src.line_to_byte(start_line as usize) + start_col as usize;
-        let byte_end = self.src.line_to_byte(end_line as usize) + end_col as usize;
+        
+        let start_char_idx = self.src.line_to_char(start_line as usize) + start_col as usize;
+        let byte_start = self.src.char_to_byte(start_char_idx);
+
+        let end_char_idx = self.src.line_to_char(end_line as usize) + end_col as usize;
+        let byte_end = self.src.char_to_byte(end_char_idx);
 
         self.src.remove(byte_start..byte_end);
         self.src.insert(byte_start, &text);
@@ -180,9 +187,6 @@ impl Doc {
             .collect();
         self.tree = new_tree;
 
-        let module = Module::new(&self.tree, &self.src);
-        self.module = module;
-
         self.update();
 
         Ok(changed)
@@ -206,10 +210,12 @@ impl Doc {
             if node.is_missing() {
                 self.parse_errors.push(ParseError {
                     node_id: node.id(),
-                    message: format!("Missing `{}`", node_text(node, &self.src)),
+                    message: format!("Missing `{}`", node.to_sexp()),
                 })
             }
         });
+
+        self.module = Module::new(&self.tree, &self.src).map(|x| Arc::new(x))
     }
 
     pub fn get_node(&self, id: usize) -> Option<&SyntaxNode> {
@@ -253,12 +259,16 @@ impl Doc {
         self.find_path(pos).into_iter().last()
     }
 
-    pub fn parse_errors(&self) -> &Vec<ParseError> {
-        &self.parse_errors
+    pub fn parse_errors(&self) -> Vec<ParseError> {
+        let mut errs = self.parse_errors.clone();
+        if let Err(err) = &self.module {
+            errs.push(err.clone())
+        }
+        errs
     }
 
-    pub fn module(&self) -> &Module {
-        &self.module
+    pub fn module(&self) -> Option<Arc<Module>> {
+        self.module.clone().ok()
     }
 
     pub fn get_text(&self, range: Range) -> &str {
@@ -269,10 +279,23 @@ impl Doc {
 
     pub fn format_err(&self, node_id: usize, msg: &str) -> String {
         let node = self.get_node(node_id).unwrap();
-        let text = self.get_text(node.range);
-        let range_text = format_range(node.range);
-        let first_line = format!("{}: ..{}..", range_text, text);
-        let out = format!("{}\n{} - {}", first_line, " ".repeat(range_text.len() + 4) + &"~".repeat(text.len()), msg);
-        out
+
+        let lines: Vec<String> = (node.range.start.line..node.range.end.line+1).map(|line_idx| {
+            let mut str = self.src.line(line_idx as usize).as_str().unwrap().to_string();
+            if line_idx == node.range.start.line {
+                let (start, end) = str.split_at(node.range.start.character as usize);
+                str = format!("{}{}", start.bright_black(), end.red())
+            } else if line_idx == node.range.end.line {
+                let (start, end) = str.split_at(node.range.end.character as usize);
+                str = format!("{}{}", start.red(), end.bright_black())
+            } else {
+                str = format!("{}", str.red())
+            }
+
+            format!("{: >3}| {}", line_idx + 1, str)
+        }).collect();
+
+        let msg = format!("ERROR: {}", msg).red();
+        format!("{}\n   | {}",lines.join("\n"), msg).bright_black().to_string()
     }
 }

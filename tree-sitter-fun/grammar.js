@@ -17,7 +17,7 @@ module.exports = grammar({
     ],
 
     rules: {
-      source_file: $ => field('term',$._term),
+      source_file: $ => $._inner_block,
 
       comment: $=> token.immediate(/#.*/),
       
@@ -53,9 +53,9 @@ module.exports = grammar({
       bind: $ => seq(field('lhs', choice($.id, $.sym)), '<-', field('rhs',$._term)),
       type_def: $ => seq(field('lhs', choice($.id, $.sym)), ':', field('rhs',$._type)),
       _statement: $ => choice($.def, $.bind, $.type_def),
+      _inner_block: $ => seq(sep(field('statement',$._statement) , choice(/\n+/, ';')), field('term', $._term)),
       block: $ => seq('(', 
-        sep(field('statement',$._statement) , choice(/\n+/, ';')),
-        field('term', $._term), 
+        $._inner_block,
       ')'),
 
       _term: $ => choice(

@@ -6,11 +6,17 @@ mod term;
 mod typing;
 mod utils;
 mod value;
+mod llvm;
 
-use std::{fs, vec, process, io::{self, Write}};
+use std::{
+    fs,
+    io::{self, Write},
+    process, vec, sync::Arc,
+};
 
 use anyhow::{Ok, Result};
 use colored::Colorize;
+use inkwell::context::Context;
 use lsp::Backend;
 use rustyline::DefaultEditor;
 use url::Url;
@@ -19,7 +25,7 @@ use crate::{
     builtins::{get_context, get_value_env},
     doc::Doc,
     typing::{ForAll, Type},
-    value::{eval, Value},
+    value::{eval, Value}
 };
 
 use clap::{command, Parser as ClapParser};
@@ -55,37 +61,63 @@ async fn main() {
 }
 
 fn print_value(url: Url, src: &str) -> Result<()> {
-    let src = format!("({})", src);
-
     let doc = Doc::new(url, &src).unwrap();
 
-    let type_errors = doc.module().type_errors();
-    if type_errors.len() > 0 {
-        for err in type_errors {
-            println!("{}", doc.format_err(err.node_id, err.message.as_str()).red())
-        }
-
-        return Err(anyhow::format_err!("TypeErrors"))
+    for err in doc.parse_errors() {
+        println!(
+            "{}",
+            doc.format_err(err.node_id, err.message.as_str())
+        )
     }
 
-    let context = get_context();
-    let val_env = get_value_env(&context);
+    match doc.module() {
+        None => {
+            println!("Could not run due to parse errors")
+        },
+        Some(module) => {
+            let context = Context::create();
+            let mut main_mod = llvm::CodeGen::compile(&context, Arc::clone(&module.root_term()))?;
+            println!("{}", main_mod.to_string());
+            let main_function = main_mod.get_function("_main").unwrap();
+            let execution = main_mod.create_jit_execution_engine(inkwell::OptimizationLevel::None).map_err(|err| anyhow::format_err!("JIT error: {}", err))?;
+            
+            let result = unsafe {execution.run_function(main_function, &[])};
+            let result = result.as_int(true);
 
-    let term = doc.module().root_term();
-    let mut t = doc.module().root_type().clone();
+            println!("result = {:?}", result);
 
-    let mut val = eval(&term, &val_env)?;
+            let type_errors = module.type_errors();
+            if type_errors.len() > 0 {
+                for err in type_errors {
+                    println!(
+                        "{}",
+                        doc.format_err(err.node_id, err.message.as_str())
+                    )
+                }
 
-    match (val.as_ref(), t.clone()) {
-        (Value::Task(f), ForAll(_, Type::Cons(cons, args))) if cons == "Task" => {
-            val = f()?;
-            let ty = args.get(0).unwrap();
-            t = ForAll(vec![], ty.clone());
+                return Err(anyhow::format_err!("TypeErrors"));
+            }
+
+            let context = get_context();
+            let val_env = get_value_env(&context);
+
+            let term = module.root_term();
+            let mut t = module.root_type().clone();
+
+            let mut val = eval(&term, &val_env)?;
+
+            match (val.as_ref(), t.clone()) {
+                (Value::Task(f), ForAll(_, Type::Cons(cons, args))) if cons == "Task" => {
+                    val = f()?;
+                    let ty = args.get(0).unwrap();
+                    t = ForAll(vec![], ty.clone());
+                }
+                _ => {}
+            }
+
+            println!("{} : {}", val, t);
         }
-        _ => {}
     }
-
-    println!("{} : {}", val, t);
 
     Ok(())
 }
@@ -97,10 +129,10 @@ fn run(file: &String) {
     let result = print_value(url, src.as_str());
 
     match result {
-        Result::Ok(_) => {},
+        Result::Ok(_) => {}
         Result::Err(err) => {
             println!("{}", err)
-        },
+        }
     }
 }
 
@@ -109,9 +141,9 @@ fn repl() -> Result<()> {
 
     let mut step = || -> Result<()> {
         let src = rl.readline("fun> ")?;
+        rl.add_history_entry(src.to_string())?;
         let url = Url::parse("repl://inline").unwrap();
         print_value(url, src.as_str())?;
-        rl.add_history_entry(src.to_string())?;
 
         Ok(())
     };
